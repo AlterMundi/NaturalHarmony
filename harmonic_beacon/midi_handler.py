@@ -130,6 +130,10 @@ class MidiHandler:
         """Check if a message is the f₁ modulation CC."""
         return msg.type == "control_change" and msg.control == self.f1_cc
     
+    def is_aftertouch(self, msg: mido.Message) -> bool:
+        """Check if a message is channel aftertouch."""
+        return msg.type == "aftertouch"
+    
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
         return NoteEvent(

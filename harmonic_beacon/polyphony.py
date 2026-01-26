@@ -20,6 +20,9 @@ class VoicePair:
     # Store frequencies for note-off (Surge XT needs these)
     beacon_frequency: float = 0.0
     playable_frequency: float = 0.0
+    # Store original f₁ and harmonic for real-time pitch modulation
+    original_f1: float = 54.0
+    harmonic_n: int = 1
     
     
 class VoiceTracker:
@@ -46,6 +49,9 @@ class VoiceTracker:
         # Voice ID pool (simple incrementing counter)
         self._next_voice_id = 0
         
+        # Track last played note for aftertouch center feature
+        self._last_played_note: Optional[int] = None
+        
     def _allocate_voice_id(self) -> int:
         """Allocate a new voice ID."""
         voice_id = self._next_voice_id
@@ -58,6 +64,8 @@ class VoiceTracker:
         velocity: int,
         beacon_freq: float = 0.0,
         playable_freq: float = 0.0,
+        original_f1: float = 54.0,
+        harmonic_n: int = 1,
     ) -> tuple[int, int]:
         """Register a new note and allocate voice IDs.
         
@@ -68,6 +76,8 @@ class VoiceTracker:
             velocity: Note velocity (1-127)
             beacon_freq: Frequency of the beacon voice in Hz
             playable_freq: Frequency of the playable voice in Hz
+            original_f1: The f₁ value when note was triggered (for pitch mod)
+            harmonic_n: The harmonic number for this note
             
         Returns:
             Tuple of (beacon_voice_id, playable_voice_id)
@@ -79,6 +89,8 @@ class VoiceTracker:
             pair.velocity = velocity
             pair.beacon_frequency = beacon_freq
             pair.playable_frequency = playable_freq
+            pair.original_f1 = original_f1
+            pair.harmonic_n = harmonic_n
             return pair.beacon_voice_id, pair.playable_voice_id
         
         # Allocate new voice IDs
@@ -92,7 +104,12 @@ class VoiceTracker:
             playable_voice_id=playable_id,
             beacon_frequency=beacon_freq,
             playable_frequency=playable_freq,
+            original_f1=original_f1,
+            harmonic_n=harmonic_n,
         )
+        
+        # Track last played note for aftertouch center
+        self._last_played_note = midi_note
         
         return beacon_id, playable_id
     
@@ -145,3 +162,14 @@ class VoiceTracker:
     def voice_count(self) -> int:
         """Number of currently active voices (2 per note)."""
         return len(self._active_notes) * 2
+    
+    @property
+    def last_played_note(self) -> Optional[int]:
+        """MIDI note number of the last played note."""
+        return self._last_played_note
+    
+    def get_last_played_pair(self) -> Optional[VoicePair]:
+        """Get the VoicePair for the last played note if still active."""
+        if self._last_played_note is None:
+            return None
+        return self._active_notes.get(self._last_played_note)

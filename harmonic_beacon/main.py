@@ -15,6 +15,7 @@ from .harmonics import (
     beacon_frequency,
     get_harmonic_for_key,
     playable_frequency,
+    frequency_to_midi_float,
 )
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
@@ -153,11 +154,13 @@ class HarmonicBeacon:
             current_f1, n, config.PLAYABLE_TARGET_OCTAVE
         )
         
-        # Allocate voices (store frequencies for note-off)
+        # Allocate voices (store frequencies and f1 for pitch sliding)
         beacon_id, playable_id = self.voices.note_on(
             note, velocity, 
             beacon_freq=beacon_freq, 
-            playable_freq=playable_freq
+            playable_freq=playable_freq,
+            original_f1=current_f1,
+            harmonic_n=n,
         )
         vel_normalized = velocity / 127.0
         
@@ -195,17 +198,70 @@ class HarmonicBeacon:
             print(f"⟳ f₁ target: {self.f1.target:.1f} Hz")
             
     def _update_active_voices(self) -> None:
-        """Update all active voices with current f₁.
+        """Update all active voices with current f₁ using pitch expressions.
         
-        Called when f₁ changes to keep all sounding notes in tune.
-        
-        Note: Surge XT's /ne/pitch uses semitone offsets, not absolute frequencies.
-        For now, f₁ modulation only affects NEW notes. Real-time modulation of
-        sounding notes requires calculating the semitone delta from original pitch.
+        Calculates the semitone offset from each note's original pitch
+        and sends Surge XT pitch expressions for real-time sliding.
         """
-        # TODO: Implement proper pitch expression for f₁ modulation
-        # For now, this is a no-op. New notes will use the updated f₁.
-        pass
+        current_f1 = self.f1.value
+        
+        for note, pair in self.voices.get_active_notes().items():
+            # Calculate new frequencies based on current f₁
+            new_beacon_freq = beacon_frequency(current_f1, pair.harmonic_n)
+            new_playable_freq = playable_frequency(
+                current_f1, pair.harmonic_n, config.PLAYABLE_TARGET_OCTAVE
+            )
+            
+            # Calculate semitone offsets from original frequencies
+            original_beacon_midi = frequency_to_midi_float(pair.beacon_frequency)
+            new_beacon_midi = frequency_to_midi_float(new_beacon_freq)
+            beacon_semitone_offset = new_beacon_midi - original_beacon_midi
+            
+            original_playable_midi = frequency_to_midi_float(pair.playable_frequency)
+            new_playable_midi = frequency_to_midi_float(new_playable_freq)
+            playable_semitone_offset = new_playable_midi - original_playable_midi
+            
+            # Send pitch expressions to Surge XT
+            self.osc.send_pitch_expression(pair.beacon_voice_id, beacon_semitone_offset)
+            self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
+    
+    def _handle_aftertouch(self, value: int) -> None:
+        """Handle channel aftertouch to set new f₁ center.
+        
+        When aftertouch is triggered, the last played note's beacon frequency
+        becomes the new f₁ (recentering the harmonic series so that note = n=1).
+        This does NOT slide existing notes - it sets up for future notes.
+        
+        Args:
+            value: Aftertouch pressure value (0-127)
+        """
+        # Only trigger on significant pressure (threshold avoids accidental triggers)
+        if value < 64:
+            return
+        
+        pair = self.voices.get_last_played_pair()
+        if pair is None:
+            return
+        
+        # The last played note's beacon frequency becomes the new f₁
+        # This recenters the series so that note becomes the fundamental
+        new_f1 = pair.beacon_frequency
+        
+        # Transpose to allowed range (preserve pitch class)
+        # If too low, shift up octaves
+        while new_f1 < self.f1.min_freq:
+            new_f1 *= 2.0
+            
+        # If too high, shift down octaves
+        while new_f1 > self.f1.max_freq:
+            new_f1 /= 2.0
+        
+        # Set as target (no sliding for aftertouch - instant set)
+        self.f1.value = new_f1
+        self.f1.target = new_f1
+        
+        if self.verbose:
+            print(f"⚓ Aftertouch center: f₁ = {new_f1:.1f} Hz (from MIDI {pair.midi_note})")
             
     def run(self) -> None:
         """Run the main event loop."""
@@ -230,6 +286,9 @@ class HarmonicBeacon:
                         
                     elif self.midi.is_f1_control(msg):
                         self._handle_f1_change(msg.value)
+                    
+                    elif self.midi.is_aftertouch(msg):
+                        self._handle_aftertouch(msg.value)
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(config.MIDI_POLL_INTERVAL)
