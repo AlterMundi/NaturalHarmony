@@ -156,8 +156,12 @@ class HarmonicBeacon:
             current_f1, n, config.PLAYABLE_TARGET_OCTAVE
         )
         
-        # Allocate voices and send OSC
-        beacon_id, playable_id = self.voices.note_on(note, velocity)
+        # Allocate voices (store frequencies for note-off)
+        beacon_id, playable_id = self.voices.note_on(
+            note, velocity, 
+            beacon_freq=beacon_freq, 
+            playable_freq=playable_freq
+        )
         vel_normalized = velocity / 127.0
         
         self.osc.send_note_on(beacon_id, beacon_freq, vel_normalized)
@@ -170,13 +174,19 @@ class HarmonicBeacon:
             
     def _handle_note_off(self, note: int) -> None:
         """Handle a Note-Off event."""
-        voice_ids = self.voices.note_off(note)
-        if voice_ids is None:
+        pair = self.voices.note_off(note)
+        if pair is None:
             return
-            
-        beacon_id, playable_id = voice_ids
-        self.osc.send_note_off(beacon_id)
-        self.osc.send_note_off(playable_id)
+        
+        # Send note-off with frequencies (required by Surge XT)
+        self.osc.send_note_off(
+            pair.beacon_voice_id, 
+            frequency=pair.beacon_frequency
+        )
+        self.osc.send_note_off(
+            pair.playable_voice_id,
+            frequency=pair.playable_frequency
+        )
         
         if self.verbose:
             key_offset = note % 12

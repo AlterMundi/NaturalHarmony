@@ -1,7 +1,7 @@
 """Polyphony tracking for dual-voice management.
 
 Tracks active MIDI notes and their corresponding Beacon and Playable
-voice IDs for proper Note-On/Note-Off handling.
+voice IDs and frequencies for proper Note-On/Note-Off handling.
 """
 
 from dataclasses import dataclass
@@ -17,6 +17,9 @@ class VoicePair:
     velocity: int
     beacon_voice_id: int
     playable_voice_id: int
+    # Store frequencies for note-off (Surge XT needs these)
+    beacon_frequency: float = 0.0
+    playable_frequency: float = 0.0
     
     
 class VoiceTracker:
@@ -49,7 +52,13 @@ class VoiceTracker:
         self._next_voice_id = (self._next_voice_id + 1) % self.max_voices
         return voice_id
     
-    def note_on(self, midi_note: int, velocity: int) -> tuple[int, int]:
+    def note_on(
+        self, 
+        midi_note: int, 
+        velocity: int,
+        beacon_freq: float = 0.0,
+        playable_freq: float = 0.0,
+    ) -> tuple[int, int]:
         """Register a new note and allocate voice IDs.
         
         If the note is already active, it will be replaced (retriggered).
@@ -57,6 +66,8 @@ class VoiceTracker:
         Args:
             midi_note: MIDI note number (0-127)
             velocity: Note velocity (1-127)
+            beacon_freq: Frequency of the beacon voice in Hz
+            playable_freq: Frequency of the playable voice in Hz
             
         Returns:
             Tuple of (beacon_voice_id, playable_voice_id)
@@ -66,6 +77,8 @@ class VoiceTracker:
             # Return existing IDs (caller should update frequency)
             pair = self._active_notes[midi_note]
             pair.velocity = velocity
+            pair.beacon_frequency = beacon_freq
+            pair.playable_frequency = playable_freq
             return pair.beacon_voice_id, pair.playable_voice_id
         
         # Allocate new voice IDs
@@ -77,24 +90,22 @@ class VoiceTracker:
             velocity=velocity,
             beacon_voice_id=beacon_id,
             playable_voice_id=playable_id,
+            beacon_frequency=beacon_freq,
+            playable_frequency=playable_freq,
         )
         
         return beacon_id, playable_id
     
-    def note_off(self, midi_note: int) -> Optional[tuple[int, int]]:
-        """Release a note and return its voice IDs.
+    def note_off(self, midi_note: int) -> Optional[VoicePair]:
+        """Release a note and return its voice pair.
         
         Args:
             midi_note: MIDI note number (0-127)
             
         Returns:
-            Tuple of (beacon_voice_id, playable_voice_id) if note was active,
-            None otherwise
+            VoicePair if note was active, None otherwise
         """
-        pair = self._active_notes.pop(midi_note, None)
-        if pair is None:
-            return None
-        return pair.beacon_voice_id, pair.playable_voice_id
+        return self._active_notes.pop(midi_note, None)
     
     def get_active_notes(self) -> dict[int, VoicePair]:
         """Get all currently active notes.
@@ -115,19 +126,15 @@ class VoiceTracker:
         """
         return self._active_notes.get(midi_note)
     
-    def clear(self) -> list[tuple[int, int]]:
+    def clear(self) -> list[VoicePair]:
         """Release all active notes.
         
         Returns:
-            List of (beacon_voice_id, playable_voice_id) tuples for all
-            notes that were active
+            List of VoicePairs for all notes that were active
         """
-        voice_ids = [
-            (pair.beacon_voice_id, pair.playable_voice_id)
-            for pair in self._active_notes.values()
-        ]
+        pairs = list(self._active_notes.values())
         self._active_notes.clear()
-        return voice_ids
+        return pairs
     
     @property
     def active_count(self) -> int:
