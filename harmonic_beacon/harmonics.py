@@ -45,16 +45,114 @@ FREQ_A4 = 440.0
 
 
 def get_harmonic_number(midi_note: int) -> int:
-    """Map a MIDI note number to its corresponding harmonic number.
+    """Map a MIDI note number to its corresponding harmonic number (12-key mode).
+    
+    DEPRECATED: Use get_harmonic_for_key() for full 88-key support.
     
     Args:
         midi_note: Absolute MIDI note number (0-127)
         
     Returns:
-        The harmonic number (n) from the Natural Harmonic Series
+        The harmonic number (n) from the fixed 12-interval table
     """
     key_offset = midi_note % 12
     return HARMONIC_MAP[key_offset]
+
+
+def get_harmonic_for_key(
+    midi_note: int, 
+    anchor_note: int = 24,
+    cents_threshold: float = 25.0,
+) -> int:
+    """Calculate the harmonic for any key position (88-key hybrid mode).
+    
+    Uses a two-tier approach:
+    1. If the key lands close to a pure harmonic (within cents_threshold),
+       use that harmonic directly.
+    2. Otherwise, fall back to the 12-interval table for the key's
+       chromatic position.
+    
+    Args:
+        midi_note: MIDI note number (0-127)
+        anchor_note: MIDI note that represents f₁ (default: 24 = C1)
+        cents_threshold: Maximum cents deviation to count as "exact" (default: 25)
+        
+    Returns:
+        Harmonic number (n ≥ 1)
+        
+    Examples:
+        >>> get_harmonic_for_key(36, anchor=24)  # C2 lands exactly on n=2
+        2
+        >>> get_harmonic_for_key(59, anchor=24)  # B3 doesn't land exactly, uses table
+        15
+    """
+    semitones = midi_note - anchor_note
+    
+    # Calculate the exact harmonic position
+    n_exact = 2 ** (semitones / 12)
+    n_nearest = max(1, round(n_exact))
+    
+    # Calculate cents deviation from the nearest harmonic
+    if n_nearest > 0:
+        perfect_semitones = 12 * math.log2(n_nearest)
+        cents_error = abs(semitones - perfect_semitones) * 100
+    else:
+        cents_error = float('inf')
+    
+    # If close to a pure harmonic, use it directly
+    if cents_error <= cents_threshold:
+        return n_nearest
+    
+    # Otherwise, fall back to the 12-interval table
+    # This preserves the musical character of each chromatic position
+    return HARMONIC_MAP[midi_note % 12]
+
+
+def get_harmonic_info(
+    midi_note: int, 
+    anchor_note: int = 24,
+    cents_threshold: float = 25.0,
+) -> dict:
+    """Get detailed harmonic information for a key.
+    
+    Args:
+        midi_note: MIDI note number (0-127)
+        anchor_note: MIDI note that represents f₁
+        cents_threshold: Threshold for "exact" harmonic landing
+        
+    Returns:
+        Dictionary with harmonic details including whether it's a direct
+        harmonic landing or an interval fallback.
+    """
+    semitones = midi_note - anchor_note
+    n_exact = 2 ** (semitones / 12)
+    n_nearest = max(1, round(n_exact))
+    
+    # Calculate cents deviation
+    if n_nearest > 0:
+        perfect_semitones = 12 * math.log2(n_nearest)
+        cents_error = (semitones - perfect_semitones) * 100
+    else:
+        cents_error = 0
+    
+    is_direct = abs(cents_error) <= cents_threshold
+    
+    if is_direct:
+        n_used = n_nearest
+        source = "direct"
+    else:
+        n_used = HARMONIC_MAP[midi_note % 12]
+        source = "interval"
+    
+    return {
+        "midi_note": midi_note,
+        "harmonic": n_used,
+        "n_exact": n_exact,
+        "n_nearest": n_nearest,
+        "cents_error": cents_error,
+        "semitones_from_anchor": semitones,
+        "source": source,  # "direct" or "interval"
+    }
 
 
 def get_octave(midi_note: int) -> int:

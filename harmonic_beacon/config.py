@@ -17,6 +17,19 @@ F1_MAX = 220.0  # A3
 F1_SMOOTHING_RATE = 0.1
 
 # =============================================================================
+# Keyboard Mapping
+# =============================================================================
+
+# Anchor key: MIDI note number that represents f₁ (the fundamental)
+# C1 = 24 (standard), but adjust based on your keyboard's lowest C
+ANCHOR_MIDI_NOTE = 24  # C1 = f₁
+
+# Keyboard range (standard 88-key piano: A0=21 to C8=108)
+# Adjust for your controller (e.g., 61-key often starts at C2=36)
+LOWEST_MIDI_NOTE = 21   # A0
+HIGHEST_MIDI_NOTE = 108 # C8
+
+# =============================================================================
 # MIDI Configuration
 # =============================================================================
 

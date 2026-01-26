@@ -13,9 +13,8 @@ from typing import Optional
 from . import config
 from .harmonics import (
     beacon_frequency,
-    get_harmonic_number,
+    get_harmonic_for_key,
     playable_frequency,
-    INTERVAL_NAMES,
 )
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
@@ -144,10 +143,8 @@ class HarmonicBeacon:
             
     def _handle_note_on(self, note: int, velocity: int) -> None:
         """Handle a Note-On event."""
-        # Get harmonic number from the note
-        n = get_harmonic_number(note)
-        key_offset = note % 12
-        interval_name = INTERVAL_NAMES.get(key_offset, "Unknown")
+        # Calculate harmonic dynamically based on key position
+        n = get_harmonic_for_key(note, config.ANCHOR_MIDI_NOTE)
         
         # Calculate frequencies
         current_f1 = self.f1.value
@@ -168,7 +165,7 @@ class HarmonicBeacon:
         self.osc.send_note_on(playable_id, playable_freq, vel_normalized)
         
         if self.verbose:
-            print(f"♪ Note ON: {interval_name} (n={n})")
+            print(f"♪ Note ON: MIDI {note} → n={n}")
             print(f"    Beacon:   {beacon_freq:.2f} Hz")
             print(f"    Playable: {playable_freq:.2f} Hz")
             
@@ -189,9 +186,7 @@ class HarmonicBeacon:
         )
         
         if self.verbose:
-            key_offset = note % 12
-            interval_name = INTERVAL_NAMES.get(key_offset, "Unknown")
-            print(f"♫ Note OFF: {interval_name}")
+            print(f"♫ Note OFF: MIDI {note}")
             
     def _handle_f1_change(self, cc_value: int) -> None:
         """Handle f₁ modulation CC."""
