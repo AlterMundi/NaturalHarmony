@@ -1,0 +1,4 @@
+# The Harmonic Beacon - Dependencies
+mido>=1.3.0
+python-rtmidi>=1.5.0
+pyliblo3>=0.16.0
