@@ -132,10 +132,8 @@ class HarmonicBeacon:
         self.running = False
         
         # Release all active voices
-        voice_pairs = self.voices.clear()
-        for beacon_id, playable_id in voice_pairs:
-            self.osc.send_note_off(beacon_id)
-            self.osc.send_note_off(playable_id)
+        self.osc.send_all_notes_off()
+        self.voices.clear()
             
         # Close connections
         self.midi.close()
@@ -195,21 +193,14 @@ class HarmonicBeacon:
         """Update all active voices with current f₁.
         
         Called when f₁ changes to keep all sounding notes in tune.
-        """
-        current_f1 = self.f1.value
         
-        for note, pair in self.voices.get_active_notes().items():
-            n = get_harmonic_number(note)
-            
-            # Calculate new frequencies
-            beacon_freq = beacon_frequency(current_f1, n)
-            playable_freq = playable_frequency(
-                current_f1, n, config.PLAYABLE_TARGET_OCTAVE
-            )
-            
-            # Send frequency updates
-            self.osc.send_frequency_update(pair.beacon_voice_id, beacon_freq)
-            self.osc.send_frequency_update(pair.playable_voice_id, playable_freq)
+        Note: Surge XT's /ne/pitch uses semitone offsets, not absolute frequencies.
+        For now, f₁ modulation only affects NEW notes. Real-time modulation of
+        sounding notes requires calculating the semitone delta from original pitch.
+        """
+        # TODO: Implement proper pitch expression for f₁ modulation
+        # For now, this is a no-op. New notes will use the updated f₁.
+        pass
             
     def run(self) -> None:
         """Run the main event loop."""

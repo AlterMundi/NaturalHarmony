@@ -33,7 +33,8 @@ F1_CC_NUMBER = 1
 
 # Surge XT OSC target
 OSC_HOST = "127.0.0.1"
-OSC_PORT = 9000
+#OSC_PORT = 9000
+OSC_PORT = 53280
 
 # OSC address patterns for Surge XT
 # Note: These may need adjustment based on Surge XT's actual OSC implementation

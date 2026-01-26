@@ -2,12 +2,18 @@
 
 Sends note and parameter messages to Surge XT via OSC,
 allowing for exact frequency control beyond standard MIDI.
+
+Surge XT OSC Spec (v1.3+):
+- /fnote frequency velocity [noteID]     - frequency note on
+- /fnote/rel frequency velocity [noteID] - frequency note off  
+- /allnotesoff                           - release all notes
+- All numeric values MUST be sent as floats!
 """
 
 from typing import Optional
 
 try:
-    import liblo
+    import pyliblo3 as liblo
     HAS_LIBLO = True
 except ImportError:
     HAS_LIBLO = False
@@ -22,6 +28,11 @@ class OscSender:
     
     Uses pyliblo to communicate with Surge XT's OSC interface,
     enabling microtonal note control with exact frequencies.
+    
+    Surge XT OSC Note Format (v1.3+):
+    - /fnote freq vel [noteID]     → note on at frequency
+    - /fnote/rel freq vel [noteID] → note off
+    - velocity 0 also releases the note
     """
     
     def __init__(
@@ -62,76 +73,89 @@ class OscSender:
     ) -> None:
         """Send a note-on message with exact frequency.
         
+        Uses Surge XT's /fnote address for frequency-based notes.
+        
         Args:
-            voice_id: Voice identifier for tracking
-            frequency: Exact frequency in Hz
-            velocity: Note velocity (0.0 to 1.0)
-            channel: MIDI channel (0-15)
+            voice_id: Voice identifier (used as noteID for tracking)
+            frequency: Exact frequency in Hz (8.176 - 12543.853)
+            velocity: Note velocity (0.0 to 127.0 per Surge spec)
+            channel: MIDI channel (unused for /fnote, kept for API compat)
         """
         if self._target is None:
             return
         
-        # Convert frequency to fractional MIDI note for Surge
-        midi_note = frequency_to_midi_float(frequency)
+        # Surge XT /fnote format: frequency, velocity, [noteID]
+        # All values must be floats!
+        # Velocity is 0-127 range for Surge (not 0-1)
+        vel_scaled = velocity * 127.0 if velocity <= 1.0 else velocity
         
-        # Send OSC message
-        # Format: /surge/noteon voice_id midi_note velocity channel
         liblo.send(
             self._target,
-            config.OSC_NOTE_ON,
-            ("i", voice_id),      # Voice ID
-            ("f", midi_note),     # Fractional MIDI note
-            ("f", velocity),      # Velocity (0-1)
-            ("i", channel),       # Channel
+            "/fnote",
+            ("f", float(frequency)),
+            ("f", float(vel_scaled)),
+            ("f", float(voice_id)),  # noteID as float
         )
         
-    def send_note_off(self, voice_id: int, channel: int = 0) -> None:
-        """Send a note-off message.
-        
-        Args:
-            voice_id: Voice identifier to release
-            channel: MIDI channel (0-15)
-        """
-        if self._target is None:
-            return
-        
-        # Send OSC message
-        # Format: /surge/noteoff voice_id channel
-        liblo.send(
-            self._target,
-            config.OSC_NOTE_OFF,
-            ("i", voice_id),
-            ("i", channel),
-        )
-        
-    def send_frequency_update(
-        self,
-        voice_id: int,
-        frequency: float,
+    def send_note_off(
+        self, 
+        voice_id: int, 
+        frequency: float = 0.0,
+        release_velocity: float = 0.0,
         channel: int = 0,
     ) -> None:
-        """Update the frequency of an active voice.
+        """Send a note-off message.
         
-        Used for real-time f₁ modulation of sounding notes.
+        Uses Surge XT's /fnote/rel address for note release.
         
         Args:
-            voice_id: Voice identifier to update
-            frequency: New frequency in Hz
-            channel: MIDI channel (0-15)
+            voice_id: Voice identifier (noteID) to release
+            frequency: Frequency of the note (ignored if noteID provided)
+            release_velocity: Release velocity (0.0 to 127.0)
+            channel: MIDI channel (unused for /fnote/rel)
         """
         if self._target is None:
             return
         
-        midi_note = frequency_to_midi_float(frequency)
-        
-        # Send pitch update
-        # This uses a custom address pattern for frequency updates
+        # Surge XT /fnote/rel format: frequency, release_velocity, [noteID]
+        # When noteID is supplied, frequency is disregarded
         liblo.send(
             self._target,
-            "/surge/voice/pitch",
-            ("i", voice_id),
-            ("f", midi_note),
-            ("i", channel),
+            "/fnote/rel",
+            ("f", float(frequency)),
+            ("f", float(release_velocity)),
+            ("f", float(voice_id)),  # noteID as float
+        )
+    
+    def send_all_notes_off(self) -> None:
+        """Send all-notes-off message to release all sounding notes."""
+        if self._target is None:
+            return
+        liblo.send(self._target, "/allnotesoff")
+        
+    def send_pitch_expression(
+        self,
+        voice_id: int,
+        semitone_offset: float,
+    ) -> None:
+        """Send pitch note expression to adjust a sounding note.
+        
+        Uses Surge XT's /ne/pitch for per-note pitch adjustment.
+        This can be used for real-time f₁ modulation.
+        
+        Args:
+            voice_id: noteID of the note to adjust
+            semitone_offset: Pitch offset in semitones (-120 to +120)
+        """
+        if self._target is None:
+            return
+        
+        # /ne/pitch noteID semitone_offset
+        liblo.send(
+            self._target,
+            "/ne/pitch",
+            ("f", float(voice_id)),
+            ("f", float(semitone_offset)),
         )
         
     def send_parameter(
@@ -142,14 +166,14 @@ class OscSender:
         """Send a parameter change message.
         
         Args:
-            param_path: Parameter path (e.g., "osc/1/pitch")
-            value: Parameter value
+            param_path: Parameter path (e.g., "a/amp/gain")
+            value: Parameter value (0.0 to 1.0 for most params)
         """
         if self._target is None:
             return
         
-        address = f"{config.OSC_PARAMETER}/{param_path}"
-        liblo.send(self._target, address, ("f", value))
+        address = f"/param/{param_path}"
+        liblo.send(self._target, address, ("f", float(value)))
         
     def send_raw(self, address: str, *args) -> None:
         """Send a raw OSC message.
@@ -211,51 +235,59 @@ class MockOscSender(OscSender):
         channel: int = 0,
     ) -> None:
         """Log note-on message."""
-        midi_note = frequency_to_midi_float(frequency)
+        vel_scaled = velocity * 127.0 if velocity <= 1.0 else velocity
         msg = {
             "type": "note_on",
+            "address": "/fnote",
             "voice_id": voice_id,
             "frequency": frequency,
-            "midi_note": midi_note,
-            "velocity": velocity,
-            "channel": channel,
+            "velocity": vel_scaled,
         }
         self._message_log.append(msg)
         if self.verbose:
-            print(f"[MockOSC] Note ON: voice={voice_id}, "
-                  f"freq={frequency:.2f}Hz (MIDI {midi_note:.2f}), "
-                  f"vel={velocity:.2f}")
+            print(f"[MockOSC] /fnote {frequency:.2f} {vel_scaled:.0f} {voice_id}")
             
-    def send_note_off(self, voice_id: int, channel: int = 0) -> None:
+    def send_note_off(
+        self, 
+        voice_id: int, 
+        frequency: float = 0.0,
+        release_velocity: float = 0.0,
+        channel: int = 0,
+    ) -> None:
         """Log note-off message."""
         msg = {
             "type": "note_off",
-            "voice_id": voice_id,
-            "channel": channel,
-        }
-        self._message_log.append(msg)
-        if self.verbose:
-            print(f"[MockOSC] Note OFF: voice={voice_id}")
-            
-    def send_frequency_update(
-        self,
-        voice_id: int,
-        frequency: float,
-        channel: int = 0,
-    ) -> None:
-        """Log frequency update message."""
-        midi_note = frequency_to_midi_float(frequency)
-        msg = {
-            "type": "freq_update",
+            "address": "/fnote/rel",
             "voice_id": voice_id,
             "frequency": frequency,
-            "midi_note": midi_note,
-            "channel": channel,
+            "release_velocity": release_velocity,
         }
         self._message_log.append(msg)
         if self.verbose:
-            print(f"[MockOSC] Freq Update: voice={voice_id}, "
-                  f"freq={frequency:.2f}Hz (MIDI {midi_note:.2f})")
+            print(f"[MockOSC] /fnote/rel {frequency:.2f} {release_velocity:.0f} {voice_id}")
+    
+    def send_all_notes_off(self) -> None:
+        """Log all-notes-off message."""
+        msg = {"type": "all_notes_off", "address": "/allnotesoff"}
+        self._message_log.append(msg)
+        if self.verbose:
+            print("[MockOSC] /allnotesoff")
+            
+    def send_pitch_expression(
+        self,
+        voice_id: int,
+        semitone_offset: float,
+    ) -> None:
+        """Log pitch expression message."""
+        msg = {
+            "type": "pitch_expression",
+            "address": "/ne/pitch",
+            "voice_id": voice_id,
+            "semitone_offset": semitone_offset,
+        }
+        self._message_log.append(msg)
+        if self.verbose:
+            print(f"[MockOSC] /ne/pitch {voice_id} {semitone_offset:.2f}")
             
     def get_log(self) -> list[dict]:
         """Get the message log."""
