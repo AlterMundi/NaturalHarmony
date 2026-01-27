@@ -40,6 +40,10 @@ MIDI_PORT_PATTERN = "KeyLab"
 # CC number for f₁ modulation (mod wheel = 1, common slider = 74)
 F1_CC_NUMBER = 1
 
+# CC number for aftertouch mode toggle (KeyLab toggle button 1 = CC22)
+# OFF = f₁ Center mode, ON = Key Anchor mode
+AFTERTOUCH_MODE_CC = 22
+
 # =============================================================================
 # OSC Configuration (Surge XT)
 # =============================================================================

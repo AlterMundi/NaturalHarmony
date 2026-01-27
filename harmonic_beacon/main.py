@@ -5,10 +5,17 @@ in a real-time event loop.
 """
 
 import argparse
+from enum import Enum
 import signal
 import sys
 import time
 from typing import Optional
+
+
+class AftertouchMode(Enum):
+    """Aftertouch behavior modes."""
+    F1_CENTER = 0   # CC22 OFF: Aftertouch sets f₁, anchor stays at C1
+    KEY_ANCHOR = 1  # CC22 ON: Aftertouch sets f₁ AND moves anchor to pressed key
 
 from . import config
 from .harmonics import (
@@ -104,6 +111,9 @@ class HarmonicBeacon:
         """
         self.verbose = verbose
         self.running = False
+        
+        # Aftertouch mode (toggled by CC22)
+        self.aftertouch_mode = AftertouchMode.F1_CENTER
         
         # Initialize components
         self.midi = MidiHandler()
@@ -226,11 +236,15 @@ class HarmonicBeacon:
             self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
     
     def _handle_aftertouch(self, value: int) -> None:
-        """Handle channel aftertouch to set new f₁ center.
+        """Handle channel aftertouch based on current mode.
         
-        When aftertouch is triggered, the last played note's beacon frequency
-        becomes the new f₁ (recentering the harmonic series so that note = n=1).
-        This does NOT slide existing notes - it sets up for future notes.
+        F1_CENTER mode (CC22 OFF):
+            Sets f₁ to the last played note's beacon frequency.
+            Anchor stays at C1 (config.ANCHOR_MIDI_NOTE).
+            
+        KEY_ANCHOR mode (CC22 ON):
+            Sets f₁ AND moves the anchor to the last played key.
+            That key becomes n=1 (the fundamental).
         
         Args:
             value: Aftertouch pressure value (0-127)
@@ -244,24 +258,40 @@ class HarmonicBeacon:
             return
         
         # The last played note's beacon frequency becomes the new f₁
-        # This recenters the series so that note becomes the fundamental
         new_f1 = pair.beacon_frequency
         
         # Transpose to allowed range (preserve pitch class)
-        # If too low, shift up octaves
         while new_f1 < self.f1.min_freq:
             new_f1 *= 2.0
-            
-        # If too high, shift down octaves
         while new_f1 > self.f1.max_freq:
             new_f1 /= 2.0
         
-        # Set as target (no sliding for aftertouch - instant set)
+        # Set f₁ instantly (no sliding for aftertouch)
         self.f1.value = new_f1
         self.f1.target = new_f1
         
-        if self.verbose:
-            print(f"⚓ Aftertouch center: f₁ = {new_f1:.1f} Hz (from MIDI {pair.midi_note})")
+        # In KEY_ANCHOR mode, also move the anchor to the pressed key
+        if self.aftertouch_mode == AftertouchMode.KEY_ANCHOR:
+            config.ANCHOR_MIDI_NOTE = pair.midi_note
+            if self.verbose:
+                print(f"⚓ Key Anchor: MIDI {pair.midi_note} is now n=1, f₁ = {new_f1:.1f} Hz")
+        else:
+            if self.verbose:
+                print(f"⚓ f₁ Center: f₁ = {new_f1:.1f} Hz (from MIDI {pair.midi_note})")
+    
+    def _handle_mode_toggle(self, cc_value: int) -> None:
+        """Handle aftertouch mode toggle (CC22).
+        
+        Args:
+            cc_value: CC value (0=OFF, 127=ON for toggle buttons)
+        """
+        new_mode = AftertouchMode.KEY_ANCHOR if cc_value >= 64 else AftertouchMode.F1_CENTER
+        
+        if new_mode != self.aftertouch_mode:
+            self.aftertouch_mode = new_mode
+            if self.verbose:
+                mode_name = "Key Anchor 🎯" if new_mode == AftertouchMode.KEY_ANCHOR else "f₁ Center 📍"
+                print(f"🔄 Mode: {mode_name}")
             
     def run(self) -> None:
         """Run the main event loop."""
@@ -289,6 +319,9 @@ class HarmonicBeacon:
                     
                     elif self.midi.is_aftertouch(msg):
                         self._handle_aftertouch(msg.value)
+                    
+                    elif self.midi.is_mode_toggle(msg):
+                        self._handle_mode_toggle(msg.value)
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(config.MIDI_POLL_INTERVAL)

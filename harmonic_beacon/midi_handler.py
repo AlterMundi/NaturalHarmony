@@ -134,6 +134,10 @@ class MidiHandler:
         """Check if a message is channel aftertouch."""
         return msg.type == "aftertouch"
     
+    def is_mode_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is the aftertouch mode toggle CC (CC22)."""
+        return msg.type == "control_change" and msg.control == config.AFTERTOUCH_MODE_CC
+    
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
         return NoteEvent(
