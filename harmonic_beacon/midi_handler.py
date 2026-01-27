@@ -138,6 +138,18 @@ class MidiHandler:
         """Check if a message is the aftertouch mode toggle CC (CC22)."""
         return msg.type == "control_change" and msg.control == config.AFTERTOUCH_MODE_CC
     
+    def is_tolerance_control(self, msg: mido.Message) -> bool:
+        """Check if a message is the tolerance CC (CC67)."""
+        return msg.type == "control_change" and msg.control == config.TOLERANCE_CC
+    
+    def is_lfo_rate_control(self, msg: mido.Message) -> bool:
+        """Check if a message is the LFO rate CC (CC68)."""
+        return msg.type == "control_change" and msg.control == config.LFO_RATE_CC
+    
+    def is_vibrato_mode_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is the vibrato mode toggle CC (CC23)."""
+        return msg.type == "control_change" and msg.control == config.VIBRATO_MODE_CC
+    
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
         return NoteEvent(

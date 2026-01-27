@@ -44,6 +44,27 @@ F1_CC_NUMBER = 1
 # OFF = f₁ Center mode, ON = Key Anchor mode
 AFTERTOUCH_MODE_CC = 22
 
+# CC number for tolerance slider (KeyLab slider 1 = CC67)
+# Maps 1-127 to TOLERANCE_MIN-TOLERANCE_MAX cents
+TOLERANCE_CC = 67
+TOLERANCE_MIN = 1.0    # cents
+TOLERANCE_MAX = 50.0   # cents
+DEFAULT_TOLERANCE = 25.0  # cents
+
+# CC number for LFO rate slider (KeyLab slider 2 = CC68)
+# Maps 1-127 to LFO_RATE_MIN-LFO_RATE_MAX Hz
+LFO_RATE_CC = 68
+LFO_RATE_MIN = 0.1    # Hz
+LFO_RATE_MAX = 10.0   # Hz
+DEFAULT_LFO_RATE = 1.0  # Hz
+
+# CC number for vibrato mode toggle (KeyLab toggle button 2 = CC23)
+# OFF = Smooth interpolation, ON = Stepped (discrete jumps)
+VIBRATO_MODE_CC = 23
+
+# Maximum harmonic to search when finding matches
+MAX_HARMONIC = 128
+
 # =============================================================================
 # OSC Configuration (Surge XT)
 # =============================================================================

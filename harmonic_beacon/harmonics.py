@@ -275,3 +275,104 @@ def cents_difference(freq1: float, freq2: float) -> float:
     if freq1 <= 0 or freq2 <= 0:
         raise ValueError("Frequencies must be positive")
     return 1200.0 * math.log2(freq2 / freq1)
+
+
+# =============================================================================
+# Tolerance-Based Harmonic Search
+# =============================================================================
+
+def harmonic_to_cents(n: int) -> float:
+    """Calculate the distance of harmonic n from the fundamental in cents.
+    
+    Args:
+        n: Harmonic number (n >= 1)
+        
+    Returns:
+        Cents above the fundamental (1200 cents = 1 octave)
+    """
+    if n < 1:
+        raise ValueError(f"Harmonic number must be >= 1, got {n}")
+    return 1200.0 * math.log2(n)
+
+
+def find_harmonics_for_key(
+    semitones_from_anchor: int,
+    tolerance_cents: float,
+    max_harmonic: int = 128,
+) -> list[int]:
+    """Find all harmonics within tolerance of a key position.
+    
+    Args:
+        semitones_from_anchor: Semitone distance from anchor key (can be negative)
+        tolerance_cents: Maximum deviation in cents to count as a match
+        max_harmonic: Highest harmonic to search
+        
+    Returns:
+        List of matching harmonic numbers, sorted ascending. Empty if none.
+        
+    Examples:
+        >>> find_harmonics_for_key(12, 10.0)  # Octave above anchor
+        [2]
+        >>> find_harmonics_for_key(19, 5.0)   # ~Perfect 5th + octave
+        [3]
+        >>> find_harmonics_for_key(48, 50.0)  # High C - multiple matches
+        [16]
+    """
+    key_cents = semitones_from_anchor * 100.0
+    matches = []
+    
+    for n in range(1, max_harmonic + 1):
+        harmonic_cents = harmonic_to_cents(n)
+        deviation = abs(harmonic_cents - key_cents)
+        if deviation <= tolerance_cents:
+            matches.append(n)
+    
+    return matches
+
+
+def find_harmonics_with_fallback(
+    midi_note: int,
+    anchor_note: int,
+    tolerance_cents: float,
+    max_harmonic: int = 128,
+) -> list[int]:
+    """Find harmonics for a key, with neighbor fallback if none found.
+    
+    If no harmonics are within tolerance, searches outward from the key
+    until a neighbor is found that has at least one match.
+    
+    Args:
+        midi_note: MIDI note number (0-127)
+        anchor_note: MIDI note that represents f₁
+        tolerance_cents: Maximum deviation in cents
+        max_harmonic: Highest harmonic to search
+        
+    Returns:
+        List of matching harmonic numbers (never empty)
+    """
+    semitones = midi_note - anchor_note
+    
+    # Try exact position first
+    matches = find_harmonics_for_key(semitones, tolerance_cents, max_harmonic)
+    if matches:
+        return matches
+    
+    # Search outward from the key position
+    for offset in range(1, 128):
+        # Try below
+        matches_below = find_harmonics_for_key(
+            semitones - offset, tolerance_cents, max_harmonic
+        )
+        if matches_below:
+            return matches_below
+        
+        # Try above
+        matches_above = find_harmonics_for_key(
+            semitones + offset, tolerance_cents, max_harmonic
+        )
+        if matches_above:
+            return matches_above
+    
+    # Absolute fallback: fundamental
+    return [1]
+

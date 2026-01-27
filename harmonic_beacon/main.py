@@ -20,10 +20,11 @@ class AftertouchMode(Enum):
 from . import config
 from .harmonics import (
     beacon_frequency,
-    get_harmonic_for_key,
+    find_harmonics_with_fallback,
     playable_frequency,
     frequency_to_midi_float,
 )
+from .lfo import HarmonicLFO, VibratoMode
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
 from .polyphony import VoiceTracker
@@ -115,6 +116,15 @@ class HarmonicBeacon:
         # Aftertouch mode (toggled by CC22)
         self.aftertouch_mode = AftertouchMode.F1_CENTER
         
+        # Tolerance and LFO settings
+        self.tolerance = config.DEFAULT_TOLERANCE
+        self.lfo_rate = config.DEFAULT_LFO_RATE
+        self.vibrato_mode = VibratoMode.SMOOTH
+        
+        # Per-note LFOs for harmonic chorus
+        self._note_lfos: dict[int, HarmonicLFO] = {}
+        self._last_update_time = time.time()
+        
         # Initialize components
         self.midi = MidiHandler()
         self.osc: OscSender = MockOscSender(verbose=verbose) if mock_osc else OscSender()
@@ -153,24 +163,40 @@ class HarmonicBeacon:
             print("\n✓ The Harmonic Beacon has stopped.")
             
     def _handle_note_on(self, note: int, velocity: int) -> None:
-        """Handle a Note-On event."""
-        # Calculate harmonic dynamically based on key position
-        n = get_harmonic_for_key(note, config.ANCHOR_MIDI_NOTE)
-        
-        # Calculate frequencies
-        current_f1 = self.f1.value
-        beacon_freq = beacon_frequency(current_f1, n)
-        playable_freq = playable_frequency(
-            current_f1, n, config.PLAYABLE_TARGET_OCTAVE
+        """Handle a Note-On event with tolerance-based harmonic mapping."""
+        # Find all harmonics within tolerance for this key
+        harmonics = find_harmonics_with_fallback(
+            note, 
+            config.ANCHOR_MIDI_NOTE, 
+            self.tolerance,
+            config.MAX_HARMONIC,
         )
         
-        # Allocate voices (store frequencies and f1 for pitch sliding)
+        # Use primary harmonic (lowest) for voice allocation
+        primary_n = harmonics[0]
+        current_f1 = self.f1.value
+        
+        # Calculate beacon frequencies for all matching harmonics
+        beacon_freqs = [beacon_frequency(current_f1, n) for n in harmonics]
+        
+        # Primary frequencies for the voice pair
+        beacon_freq = beacon_freqs[0]
+        playable_freq = playable_frequency(
+            current_f1, primary_n, config.PLAYABLE_TARGET_OCTAVE
+        )
+        
+        # Set up LFO for harmonic chorus if multiple matches
+        lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
+        lfo.set_harmonics(beacon_freqs)
+        self._note_lfos[note] = lfo
+        
+        # Allocate voices
         beacon_id, playable_id = self.voices.note_on(
             note, velocity, 
             beacon_freq=beacon_freq, 
             playable_freq=playable_freq,
             original_f1=current_f1,
-            harmonic_n=n,
+            harmonic_n=primary_n,
         )
         vel_normalized = velocity / 127.0
         
@@ -178,7 +204,8 @@ class HarmonicBeacon:
         self.osc.send_note_on(playable_id, playable_freq, vel_normalized)
         
         if self.verbose:
-            print(f"♪ Note ON: MIDI {note} → n={n}")
+            harm_str = ",".join(str(n) for n in harmonics)
+            print(f"♪ Note ON: MIDI {note} → n=[{harm_str}] (tol: {self.tolerance:.0f}¢)")
             print(f"    Beacon:   {beacon_freq:.2f} Hz")
             print(f"    Playable: {playable_freq:.2f} Hz")
             
@@ -187,6 +214,9 @@ class HarmonicBeacon:
         pair = self.voices.note_off(note)
         if pair is None:
             return
+        
+        # Clean up LFO for this note
+        self._note_lfos.pop(note, None)
         
         # Send note-off with frequencies (required by Surge XT)
         self.osc.send_note_off(
@@ -292,19 +322,102 @@ class HarmonicBeacon:
             if self.verbose:
                 mode_name = "Key Anchor 🎯" if new_mode == AftertouchMode.KEY_ANCHOR else "f₁ Center 📍"
                 print(f"🔄 Mode: {mode_name}")
+    
+    def _handle_tolerance_change(self, cc_value: int) -> None:
+        """Handle tolerance CC (CC67).
+        
+        Args:
+            cc_value: CC value (1-127) maps to TOLERANCE_MIN-TOLERANCE_MAX
+        """
+        # Map 1-127 to tolerance range (avoid 0 for minimum audible effect)
+        normalized = max(1, cc_value) / 127.0
+        self.tolerance = (
+            config.TOLERANCE_MIN + 
+            normalized * (config.TOLERANCE_MAX - config.TOLERANCE_MIN)
+        )
+        if self.verbose:
+            print(f"🎚️ Tolerance: {self.tolerance:.1f}¢")
+    
+    def _handle_lfo_rate_change(self, cc_value: int) -> None:
+        """Handle LFO rate CC (CC68).
+        
+        Args:
+            cc_value: CC value (0-127) maps to LFO_RATE_MIN-LFO_RATE_MAX
+        """
+        normalized = cc_value / 127.0
+        self.lfo_rate = (
+            config.LFO_RATE_MIN + 
+            normalized * (config.LFO_RATE_MAX - config.LFO_RATE_MIN)
+        )
+        # Update all active LFOs
+        for lfo in self._note_lfos.values():
+            lfo.rate = self.lfo_rate
+        if self.verbose:
+            print(f"🌊 LFO Rate: {self.lfo_rate:.2f} Hz")
+    
+    def _handle_vibrato_mode_toggle(self, cc_value: int) -> None:
+        """Handle vibrato mode toggle (CC23).
+        
+        Args:
+            cc_value: CC value (0=smooth, 127=stepped)
+        """
+        new_mode = VibratoMode.STEPPED if cc_value >= 64 else VibratoMode.SMOOTH
+        
+        if new_mode != self.vibrato_mode:
+            self.vibrato_mode = new_mode
+            # Update all active LFOs
+            for lfo in self._note_lfos.values():
+                lfo.mode = new_mode
+            if self.verbose:
+                mode_name = "Stepped ▮▮" if new_mode == VibratoMode.STEPPED else "Smooth 〜"
+                print(f"🔄 Vibrato: {mode_name}")
+    
+    def _update_lfo_chorus(self, dt: float) -> None:
+        """Update LFO chorus for all active notes.
+        
+        Args:
+            dt: Time delta since last update in seconds
+        """
+        for note, lfo in self._note_lfos.items():
+            if lfo.harmonic_count <= 1:
+                continue  # No chorus needed for single harmonic
+            
+            pair = self.voices.get_active_notes().get(note)
+            if pair is None:
+                continue
+            
+            # Get current frequency from LFO
+            current_freq = lfo.update(dt)
+            
+            # Calculate pitch offset from original beacon frequency
+            original_midi = frequency_to_midi_float(pair.beacon_frequency)
+            current_midi = frequency_to_midi_float(current_freq)
+            semitone_offset = current_midi - original_midi
+            
+            # Send pitch expression
+            self.osc.send_pitch_expression(pair.beacon_voice_id, semitone_offset)
             
     def run(self) -> None:
         """Run the main event loop."""
         self.start()
+        self._last_update_time = time.time()
         
         try:
             while self.running:
+                current_time = time.time()
+                dt = current_time - self._last_update_time
+                self._last_update_time = current_time
+                
                 # Update f₁ interpolation
                 f1_changed = self.f1.update()
                 
                 # If f₁ changed, update all active voices
                 if f1_changed and self.voices.active_count > 0:
                     self._update_active_voices()
+                
+                # Update LFO chorus for harmonic sweep
+                if self._note_lfos:
+                    self._update_lfo_chorus(dt)
                 
                 # Process MIDI messages
                 for msg in self.midi.poll():
@@ -322,6 +435,15 @@ class HarmonicBeacon:
                     
                     elif self.midi.is_mode_toggle(msg):
                         self._handle_mode_toggle(msg.value)
+                    
+                    elif self.midi.is_tolerance_control(msg):
+                        self._handle_tolerance_change(msg.value)
+                    
+                    elif self.midi.is_lfo_rate_control(msg):
+                        self._handle_lfo_rate_change(msg.value)
+                    
+                    elif self.midi.is_vibrato_mode_toggle(msg):
+                        self._handle_vibrato_mode_toggle(msg.value)
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(config.MIDI_POLL_INTERVAL)
