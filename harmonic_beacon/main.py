@@ -121,6 +121,10 @@ class HarmonicBeacon:
         self.lfo_rate = config.DEFAULT_LFO_RATE
         self.vibrato_mode = VibratoMode.SMOOTH
         
+        # Aftertouch settings
+        self.aftertouch_enabled = True  # Can be toggled off with CC30
+        self.aftertouch_threshold = config.DEFAULT_AFTERTOUCH_THRESHOLD
+        
         # Per-note LFOs for harmonic chorus
         self._note_lfos: dict[int, HarmonicLFO] = {}
         self._last_update_time = time.time()
@@ -279,8 +283,12 @@ class HarmonicBeacon:
         Args:
             value: Aftertouch pressure value (0-127)
         """
-        # Only trigger on significant pressure (threshold avoids accidental triggers)
-        if value < 64:
+        # Check if aftertouch is enabled
+        if not self.aftertouch_enabled:
+            return
+        
+        # Only trigger when pressure exceeds threshold
+        if value < self.aftertouch_threshold:
             return
         
         pair = self.voices.get_last_played_pair()
@@ -372,6 +380,29 @@ class HarmonicBeacon:
                 mode_name = "Stepped ▮▮" if new_mode == VibratoMode.STEPPED else "Smooth 〜"
                 print(f"🔄 Vibrato: {mode_name}")
     
+    def _handle_aftertouch_enable_toggle(self, cc_value: int) -> None:
+        """Handle aftertouch enable toggle (CC30).
+        
+        Args:
+            cc_value: CC value (0=disabled, 127=enabled)
+        """
+        enabled = cc_value >= 64
+        if enabled != self.aftertouch_enabled:
+            self.aftertouch_enabled = enabled
+            if self.verbose:
+                state = "ON ✓" if enabled else "OFF ✗"
+                print(f"👆 Aftertouch: {state}")
+    
+    def _handle_aftertouch_threshold_change(self, cc_value: int) -> None:
+        """Handle aftertouch threshold CC (CC92).
+        
+        Args:
+            cc_value: CC value (0-127) used directly as threshold
+        """
+        self.aftertouch_threshold = cc_value
+        if self.verbose:
+            print(f"🎚️ Aftertouch threshold: {cc_value}")
+    
     def _update_lfo_chorus(self, dt: float) -> None:
         """Update LFO chorus for all active notes.
         
@@ -444,6 +475,12 @@ class HarmonicBeacon:
                     
                     elif self.midi.is_vibrato_mode_toggle(msg):
                         self._handle_vibrato_mode_toggle(msg.value)
+                    
+                    elif self.midi.is_aftertouch_enable_toggle(msg):
+                        self._handle_aftertouch_enable_toggle(msg.value)
+                    
+                    elif self.midi.is_aftertouch_threshold_control(msg):
+                        self._handle_aftertouch_threshold_change(msg.value)
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(config.MIDI_POLL_INTERVAL)

@@ -62,6 +62,15 @@ DEFAULT_LFO_RATE = 1.0  # Hz
 # OFF = Smooth interpolation, ON = Stepped (discrete jumps)
 VIBRATO_MODE_CC = 23
 
+# CC number for aftertouch enable toggle (CC30)
+# OFF = Aftertouch disabled, ON = Aftertouch enabled
+AFTERTOUCH_ENABLE_CC = 30
+
+# CC number for aftertouch pressure threshold slider (CC92)
+# Maps 0-127 to 0-127 pressure threshold
+AFTERTOUCH_THRESHOLD_CC = 92
+DEFAULT_AFTERTOUCH_THRESHOLD = 64
+
 # Maximum harmonic to search when finding matches
 MAX_HARMONIC = 128
 
