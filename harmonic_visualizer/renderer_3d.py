@@ -207,17 +207,16 @@ class Renderer3D:
         for p in self.particles:
             p['life'] -= dt
             if p['life'] > 0:
-                # Move outward/upward from harmonic slots
+                # Move toward target key
                 p['y'] += p['vy'] * dt
                 p['x'] += p['vx'] * dt
                 # Slow down over time
-                p['vx'] *= 0.98
-                p['vy'] *= 0.98
+                p['vx'] *= 0.97
+                p['vy'] *= 0.97
                 new_particles.append(p)
         self.particles = new_particles
         
-        # Spawn particles from active harmonic slots
-        f1 = self.state.f1
+        # Spawn particles from active harmonic slots toward their source keys
         for voice in self.state.get_all_visible_voices():
             if voice.glow < 0.2:
                 continue
@@ -227,21 +226,30 @@ class Renderer3D:
             if FREQ_MIN <= voice_freq <= FREQ_MAX:
                 slot_x = freq_to_x(voice_freq, self.ruler_width)
                 
-                # Spawn particles from the harmonic slot
-                if random.random() < 0.4 * voice.glow:
-                    # Random spread direction
-                    angle = random.uniform(-math.pi * 0.8, math.pi * 0.8)
-                    speed = 0.5 + random.random() * 0.8
+                # Get the source key position
+                key_idx = voice.source_note - config.KEYBOARD_LOWEST_NOTE
+                if 0 <= key_idx < config.KEYBOARD_KEYS:
+                    key_x = (key_idx / config.KEYBOARD_KEYS) * 3.0 - 1.5
                     
-                    self.particles.append({
-                        'x': slot_x + random.uniform(-0.02, 0.02),
-                        'y': self.ruler_y + random.uniform(-0.1, 0.1),
-                        'vx': math.cos(angle) * speed * 0.3,
-                        'vy': math.sin(angle) * speed + 0.5,  # Bias upward
-                        'life': 0.5 + random.random() * 0.5,
-                        'glow': voice.glow,
-                        'freq': voice_freq,
-                    })
+                    # Spawn particles flowing toward the key
+                    if random.random() < 0.35 * voice.glow:
+                        # Direction from harmonic slot toward key
+                        dx = key_x - slot_x
+                        dy = self.keyboard_y - 0.3 - self.ruler_y  # Upward to keyboard
+                        
+                        # Normalize and add some random spread
+                        dist = math.sqrt(dx*dx + dy*dy) + 0.001
+                        speed = 1.2 + random.random() * 0.5
+                        
+                        self.particles.append({
+                            'x': slot_x + random.uniform(-0.02, 0.02),
+                            'y': self.ruler_y + random.uniform(-0.05, 0.05),
+                            'vx': (dx / dist) * speed + random.uniform(-0.1, 0.1),
+                            'vy': (dy / dist) * speed + random.uniform(-0.1, 0.1),
+                            'life': 0.6 + random.random() * 0.4,
+                            'glow': voice.glow,
+                            'freq': voice_freq,
+                        })
         
         # Limit particles
         if len(self.particles) > 500:

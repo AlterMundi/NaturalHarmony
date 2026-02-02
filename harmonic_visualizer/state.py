@@ -13,6 +13,7 @@ class VoiceState:
     voice_id: int
     frequency: float
     gain: float
+    source_note: int = 60  # MIDI note that triggered this voice
     active: bool = True
     glow: float = 1.0  # Fade-out animation (1.0 = full, 0.0 = gone)
 
@@ -41,12 +42,13 @@ class VisualizerState:
     # Recently released voices for fade-out animation
     fading_voices: dict[int, VoiceState] = field(default_factory=dict)
     
-    def voice_on(self, voice_id: int, freq: float, gain: float) -> None:
+    def voice_on(self, voice_id: int, freq: float, gain: float, source_note: int) -> None:
         """Register a voice activation."""
         self.voices[voice_id] = VoiceState(
             voice_id=voice_id,
             frequency=freq,
             gain=gain,
+            source_note=source_note,
         )
         # Remove from fading if re-triggered
         self.fading_voices.pop(voice_id, None)

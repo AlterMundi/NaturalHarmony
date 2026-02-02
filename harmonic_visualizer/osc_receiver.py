@@ -49,7 +49,7 @@ class OscReceiver:
         # Register handlers for all beacon messages
         self._server.add_method("/beacon/f1", "f", self._handle_f1)
         self._server.add_method("/beacon/anchor", "i", self._handle_anchor)
-        self._server.add_method("/beacon/voice/on", "iff", self._handle_voice_on)
+        self._server.add_method("/beacon/voice/on", "iffi", self._handle_voice_on)
         self._server.add_method("/beacon/voice/off", "i", self._handle_voice_off)
         self._server.add_method("/beacon/voice/freq", "if", self._handle_voice_freq)
         self._server.add_method("/beacon/key/on", "ii", self._handle_key_on)
@@ -83,8 +83,8 @@ class OscReceiver:
     
     def _handle_voice_on(self, path: str, args: list) -> None:
         """Handle /beacon/voice/on message."""
-        voice_id, freq, gain = args
-        self.state.voice_on(voice_id, freq, gain)
+        voice_id, freq, gain, source_note = args
+        self.state.voice_on(voice_id, freq, gain, source_note)
     
     def _handle_voice_off(self, path: str, args: list) -> None:
         """Handle /beacon/voice/off message."""

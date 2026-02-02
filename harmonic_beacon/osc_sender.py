@@ -214,8 +214,15 @@ class OscSender:
             return
         liblo.send(self._broadcast_target, "/beacon/anchor", ("i", int(midi_note)))
     
-    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float) -> None:
-        """Broadcast voice activation to visualizer."""
+    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float, source_note: int) -> None:
+        """Broadcast voice activation to visualizer.
+        
+        Args:
+            voice_id: Voice identifier
+            freq: Frequency in Hz
+            gain: Normalized gain (0-1)
+            source_note: MIDI note that triggered this voice
+        """
         if self._broadcast_target is None:
             return
         liblo.send(
@@ -224,6 +231,7 @@ class OscSender:
             ("i", int(voice_id)),
             ("f", float(freq)),
             ("f", float(gain)),
+            ("i", int(source_note)),
         )
     
     def broadcast_voice_off(self, voice_id: int) -> None:
@@ -389,7 +397,7 @@ class MockOscSender(OscSender):
     def broadcast_anchor(self, midi_note: int) -> None:
         pass
     
-    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float) -> None:
+    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float, source_note: int) -> None:
         pass
     
     def broadcast_voice_off(self, voice_id: int) -> None:
