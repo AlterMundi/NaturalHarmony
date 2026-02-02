@@ -344,17 +344,61 @@ class Renderer3D:
         at_thresh = self.state.cc_values.get(92, 64)
         f1_mod_cc = self.state.cc_values.get(1, 0)
 
-        # 3. Render Center Focus Display (Active keys & freqs)
-        # No titles, just data expanding from center
+        # 3. Render Center Focus Display (Active Harmonics & Freqs)
+        # Center-x, Center-y
         center_x = self.screen_width // 2
-        center_y = self.screen_height // 2 - 40 # Slightly above center
+        center_y = self.screen_height // 2 - 40 
         
-        if keys_pressed:
-            keys_text = " ".join(str(k) for k in keys_pressed)
-            self._render_text_centered(keys_text, center_x, center_y, (255, 255, 255), size=24)
+        # Get active voices for center display
+        active_voices = [v for v in voices if v.glow > 0.5]
+        active_voices.sort(key=lambda v: v.frequency)
         
-        if freqs:
-            freqs_text = " ".join(f"{f:.1f}" for f in freqs)
+        if active_voices:
+            # Build list of rendered surfaces for harmonic numbers
+            total_w = 0
+            surfaces = []
+            
+            for v in active_voices:
+                n = v.harmonic_n
+                # Calculate octave shift: how many octaves away is this note from the pure harmonic?
+                # pure_freq = f1 * n
+                # ratio = freq / pure_freq
+                # shift = log2(ratio)
+                if self.state.f1 > 0:
+                    pure_freq = self.state.f1 * n
+                    ratio = v.frequency / pure_freq
+                    shift = math.log2(ratio) if ratio > 0 else 0
+                else:
+                    shift = 0
+                
+                # Color logic:
+                # shift ~ 0 (Direct match) -> White
+                # shift != 0 (Transposed) -> Magenta
+                # 0.1 threshold for floating point jitter
+                is_direct = abs(shift) < 0.1
+                
+                if is_direct:
+                    color = (255, 255, 255) # Pure White
+                else:
+                    # Magenta for shifted. Can tint based on shift magnitude if desired.
+                    color = (255, 50, 255) # Bright Magenta
+                
+                text = str(n)
+                surf = self.font.render(text, True, color)
+                surfaces.append(surf)
+                total_w += surf.get_width() + 15 # +15 padding
+            
+            total_w -= 15 # Remove last padding
+            
+            # Render centered line of harmonic numbers
+            start_x = center_x - (total_w // 2)
+            curr_x = start_x
+            for surf in surfaces:
+                self.hud_surface.blit(surf, (curr_x, center_y))
+                curr_x += surf.get_width() + 15
+                
+            # Render line of frequencies below
+            freqs_text = " ".join(f"{v.frequency:.1f}" for v in active_voices)
             self._render_text_centered(freqs_text, center_x, center_y + 30, (200, 230, 255), size=20)
 
         # 4. Render Bottom Console

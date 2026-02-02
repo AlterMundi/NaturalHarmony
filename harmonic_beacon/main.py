@@ -211,8 +211,8 @@ class HarmonicBeacon:
         
         # Broadcast to visualizer
         self.osc.broadcast_key_on(note, velocity)
-        self.osc.broadcast_voice_on(beacon_id, beacon_freq, vel_normalized, note)
-        self.osc.broadcast_voice_on(playable_id, playable_freq, vel_normalized, note)
+        self.osc.broadcast_voice_on(beacon_id, beacon_freq, vel_normalized, note, primary_n)
+        self.osc.broadcast_voice_on(playable_id, playable_freq, vel_normalized, note, primary_n)
         
         if self.verbose:
             harm_str = ",".join(str(n) for n in harmonics)

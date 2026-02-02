@@ -83,8 +83,15 @@ class OscReceiver:
     
     def _handle_voice_on(self, path: str, args: list) -> None:
         """Handle /beacon/voice/on message."""
-        voice_id, freq, gain, source_note = args
-        self.state.voice_on(voice_id, freq, gain, source_note)
+        try:
+            # Try parsing with new 5-argument format
+            voice_id, freq, gain, source_note, harmonic_n = args
+        except ValueError:
+            # Fallback for old format (4 arguments)
+            voice_id, freq, gain, source_note = args
+            harmonic_n = 1
+            
+        self.state.voice_on(voice_id, freq, gain, source_note, harmonic_n)
     
     def _handle_voice_off(self, path: str, args: list) -> None:
         """Handle /beacon/voice/off message."""
