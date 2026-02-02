@@ -317,123 +317,115 @@ class Renderer3D:
         pygame.display.flip()
     
     def _render_hud(self) -> None:
-        """Render the full-screen HUD overlay with all numeric values."""
+        """Render the full-screen HUD overlay with console layout and centered focus."""
         if not self.hud_surface or not self.hud_texture:
             return
             
         # 1. Clear HUD surface (mostly transparent)
-        self.hud_surface.fill((0, 0, 0, 10))  # Ultra-faint tinted background
+        self.hud_surface.fill((0, 0, 0, 0))
         
-        # 2. Collect and organized telemetry
+        # 2. Collect telemetry
         voices = self.state.get_all_visible_voices()
         active_count = len([v for v in voices if v.glow > 0.5])
         freqs = sorted(set(v.frequency for v in voices if v.glow > 0.5))
         keys_pressed = sorted(self.state.pressed_keys.keys())
         
-        # CC value mapping
+        # CC values
         tol_cc = self.state.cc_values.get(67, 64)
         tol_val = 1.0 + (tol_cc / 127.0) * (50.0 - 1.0)
-        
         lfo_cc = self.state.cc_values.get(68, 10)
         lfo_val = 0.1 + (lfo_cc / 127.0) * (10.0 - 0.1)
-        
         vib_cc = self.state.cc_values.get(23, 0)
         vib_mode = "Stepped" if vib_cc >= 64 else "Smooth"
-        
         at_mode_cc = self.state.cc_values.get(22, 0)
         at_aftertouch_mode = "Key Anchor" if at_mode_cc >= 64 else "f1 Center"
-        
         at_enabled_cc = self.state.cc_values.get(30, 0)
         at_status = "ON" if at_enabled_cc >= 64 else "OFF"
-        
         at_thresh = self.state.cc_values.get(92, 64)
-        f1_mod_cc = self.state.cc_values.get(1, 0) # F1 modulation
+        f1_mod_cc = self.state.cc_values.get(1, 0)
+
+        # 3. Render Center Focus Display (Active keys & freqs)
+        # No titles, just data expanding from center
+        center_x = self.screen_width // 2
+        center_y = self.screen_height // 2 - 40 # Slightly above center
         
-        # 3. Create Columns
-        col1 = [
-            "CORE STATE",
-            "----------",
-            f"f1 Frequency: {self.state.f1:.2f} Hz",
-            f"f1 Mod CC (1): {f1_mod_cc}",
-            f"Anchor Note:  {self.state.anchor_note}",
-            "",
-            "ACTIVE VOICES",
-            "-------------",
-            f"Voice Count: {active_count}",
-            f"Pressed:     {len(keys_pressed)}",
-            f"Keys: {', '.join(map(str, keys_pressed)) if keys_pressed else '--'}",
-        ]
+        if keys_pressed:
+            keys_text = " ".join(str(k) for k in keys_pressed)
+            self._render_text_centered(keys_text, center_x, center_y, (255, 255, 255), size=24)
         
-        # Formatted frequency list (multi-line if needed)
-        col1_freqs = ["Frequencies:"]
-        chunk_size = 4
-        for i in range(0, len(freqs), chunk_size):
-            chunk = freqs[i:i+chunk_size]
-            col1_freqs.append("  " + ", ".join(f"{f:.1f}" for f in chunk))
-        if not freqs: col1_freqs.append("  --")
-        col1.extend(col1_freqs)
+        if freqs:
+            freqs_text = " ".join(f"{f:.1f}" for f in freqs)
+            self._render_text_centered(freqs_text, center_x, center_y + 30, (200, 230, 255), size=20)
+
+        # 4. Render Bottom Console
+        # Console background
+        console_height = 140
+        console_y = self.screen_height - console_height
+        pygame.draw.rect(self.hud_surface, (10, 10, 20, 240), (0, console_y, self.screen_width, console_height))
+        pygame.draw.line(self.hud_surface, (100, 150, 255), (0, console_y), (self.screen_width, console_y), 2)
         
-        col2 = [
-            "BEACON SETTINGS",
-            "---------------",
-            f"Tolerance (CC 67): {tol_val:.1f} cents",
-            f"LFO Rate (CC 68):  {lfo_val:.2f} Hz",
-            f"Vibrato (CC 23):   {vib_mode}",
-            "",
-            "AFTERTOUCH",
-            "----------",
-            f"Status (CC 30):    {at_status}",
-            f"Mode (CC 22):      {at_aftertouch_mode}",
-            f"Threshold (CC 92): {at_thresh}",
-            "",
-            "CONTROLS",
-            "--------",
-            "[F] Fullscreen / Windowed",
-            "[H] Toggle HUD Overlay",
-            "[E] Toggle Energy Lines",
-            "[ESC] Quit Visualizer"
-        ]
-        
-        # 4. Draw Panels (Corner background)
-        # Left Panel
-        pygame.draw.rect(self.hud_surface, (15, 15, 30, 200), (20, 20, 360, 480), border_radius=10)
-        pygame.draw.rect(self.hud_surface, (100, 150, 255, 80), (20, 20, 360, 480), 2, border_radius=10)
-        
-        # Right Panel
-        pygame.draw.rect(self.hud_surface, (15, 15, 30, 200), (400, 20, 360, 480), border_radius=10)
-        pygame.draw.rect(self.hud_surface, (100, 155, 255, 80), (400, 20, 360, 480), 2, border_radius=10)
-        
-        # 5. Render Text
-        def render_col(lines, x_pos):
-            y_offset = 40
+        # Helper to render a column
+        def render_column(title, lines, x_pos):
+            # Title
+            title_surf = self.font.render(title, True, (150, 180, 255))
+            self.hud_surface.blit(title_surf, (x_pos, console_y + 15))
+            # Separator
+            sep_surf = self.font.render("-" * len(title), True, (50, 80, 120))
+            self.hud_surface.blit(sep_surf, (x_pos, console_y + 30))
+            
+            y_off = console_y + 50
             for line in lines:
-                color = (200, 230, 255)
-                if "-" in line and len(line) > 3: color = (100, 150, 255) # Dim separators
-                if ":" in line: 
-                    parts = line.split(":", 1)
-                    # Label
-                    lbl = self.font.render(parts[0] + ":", True, (150, 180, 255))
-                    self.hud_surface.blit(lbl, (x_pos, y_offset))
-                    # Value
-                    val = self.font.render(parts[1], True, (220, 240, 255))
-                    self.hud_surface.blit(val, (x_pos + 170, y_offset))
-                else:
-                    text_surface = self.font.render(line, True, color)
-                    self.hud_surface.blit(text_surface, (x_pos, y_offset))
-                y_offset += 24
-                
-        render_col(col1, 40)
-        render_col(col2, 420)
+                surf = self.font.render(line, True, (200, 230, 255))
+                self.hud_surface.blit(surf, (x_pos, y_off))
+                y_off += 20
+
+        # Column 1: Core State
+        col1_data = [
+            f"f1: {self.state.f1:.2f} Hz",
+            f"Mod: {f1_mod_cc} | Anchor: {self.state.anchor_note}",
+            f"Active Voices: {active_count}",
+        ]
+        render_column("CORE STATE", col1_data, 50)
         
-        # 6. Upload and Render
+        # Column 2: Settings
+        col2_data = [
+            f"Tolerance: {tol_val:.1f} cents",
+            f"LFO: {lfo_val:.2f} Hz | {vib_mode}",
+        ]
+        render_column("SETTINGS", col2_data, 350)
+        
+        # Column 3: Aftertouch
+        col3_data = [
+            f"Status: {at_status}",
+            f"Mode: {at_aftertouch_mode}",
+            f"Thresh: {at_thresh}",
+        ]
+        render_column("AFTERTOUCH", col3_data, 650)
+        
+        # Column 4: Controls
+        col4_data = [
+            "[F] Fullscreen  [H] HUD",
+            "[E] Energy Lines [ESC] Quit",
+        ]
+        render_column("CONTROLS", col4_data, 950)
+        
+        # 5. Upload and Render
         texture_data = pygame.image.tostring(self.hud_surface, 'RGBA', False)
         self.hud_texture.write(texture_data)
         
         self.hud_texture.use(0)
         self.hud_vao.render(moderngl.TRIANGLE_STRIP)
         
-        # Keep title minimal
         pygame.display.set_caption(f"Harmonic Visualizer | f1={self.state.f1:.1f}Hz")
+
+    def _render_text_centered(self, text: str, x: int, y: int, color: tuple, size: int=16) -> None:
+        """Helper to render centered text."""
+        # Note: We are using a fixed font size 'self.font' which is 16px. 
+        # To support multiple sizes, we'd need multiple Font objects.
+        # For now, we'll stick to the default font but maybe bold/bright distinction.
+        surf = self.font.render(text, True, color)
+        rect = surf.get_rect(center=(x, y))
+        self.hud_surface.blit(surf, rect)
     
     def _update_particles(self, dt: float) -> None:
         """Update particle positions and spawn new ones from active harmonics."""
