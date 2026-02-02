@@ -102,12 +102,14 @@ class HarmonicBeacon:
     def __init__(
         self,
         mock_osc: bool = False,
+        broadcast: bool = False,
         verbose: bool = True,
     ):
         """Initialize The Harmonic Beacon.
         
         Args:
             mock_osc: If True, use MockOscSender instead of real OSC
+            broadcast: If True, broadcast state to visualizer
             verbose: If True, print status messages
         """
         self.verbose = verbose
@@ -131,7 +133,7 @@ class HarmonicBeacon:
         
         # Initialize components
         self.midi = MidiHandler()
-        self.osc: OscSender = MockOscSender(verbose=verbose) if mock_osc else OscSender()
+        self.osc: OscSender = MockOscSender(verbose=verbose) if mock_osc else OscSender(broadcast=broadcast)
         self.voices = VoiceTracker()
         self.f1 = F1Modulator()
         
@@ -207,6 +209,11 @@ class HarmonicBeacon:
         self.osc.send_note_on(beacon_id, beacon_freq, vel_normalized)
         self.osc.send_note_on(playable_id, playable_freq, vel_normalized)
         
+        # Broadcast to visualizer
+        self.osc.broadcast_key_on(note, velocity)
+        self.osc.broadcast_voice_on(beacon_id, beacon_freq, vel_normalized)
+        self.osc.broadcast_voice_on(playable_id, playable_freq, vel_normalized)
+        
         if self.verbose:
             harm_str = ",".join(str(n) for n in harmonics)
             print(f"♪ Note ON: MIDI {note} → n=[{harm_str}] (tol: {self.tolerance:.0f}¢)")
@@ -232,12 +239,19 @@ class HarmonicBeacon:
             frequency=pair.playable_frequency
         )
         
+        # Broadcast to visualizer
+        self.osc.broadcast_key_off(note)
+        self.osc.broadcast_voice_off(pair.beacon_voice_id)
+        self.osc.broadcast_voice_off(pair.playable_voice_id)
+        
         if self.verbose:
             print(f"♫ Note OFF: MIDI {note}")
             
     def _handle_f1_change(self, cc_value: int) -> None:
         """Handle f₁ modulation CC."""
         self.f1.set_target_from_cc(cc_value)
+        self.osc.broadcast_f1(self.f1.target)
+        self.osc.broadcast_cc(config.F1_CC_NUMBER, cc_value)
         if self.verbose:
             print(f"⟳ f₁ target: {self.f1.target:.1f} Hz")
             
@@ -345,6 +359,7 @@ class HarmonicBeacon:
         )
         if self.verbose:
             print(f"🎚️ Tolerance: {self.tolerance:.1f}¢")
+        self.osc.broadcast_cc(config.TOLERANCE_CC, cc_value)
     
     def _handle_lfo_rate_change(self, cc_value: int) -> None:
         """Handle LFO rate CC (CC68).
@@ -362,6 +377,7 @@ class HarmonicBeacon:
             lfo.rate = self.lfo_rate
         if self.verbose:
             print(f"🌊 LFO Rate: {self.lfo_rate:.2f} Hz")
+        self.osc.broadcast_cc(config.LFO_RATE_CC, cc_value)
     
     def _handle_vibrato_mode_toggle(self, cc_value: int) -> None:
         """Handle vibrato mode toggle (CC23).
@@ -379,6 +395,7 @@ class HarmonicBeacon:
             if self.verbose:
                 mode_name = "Stepped ▮▮" if new_mode == VibratoMode.STEPPED else "Smooth 〜"
                 print(f"🔄 Vibrato: {mode_name}")
+            self.osc.broadcast_cc(config.VIBRATO_MODE_CC, cc_value)
     
     def _handle_aftertouch_enable_toggle(self, cc_value: int) -> None:
         """Handle aftertouch enable toggle (CC30).
@@ -427,6 +444,9 @@ class HarmonicBeacon:
             
             # Send pitch expression
             self.osc.send_pitch_expression(pair.beacon_voice_id, semitone_offset)
+            
+            # Broadcast frequency update for visualizer
+            self.osc.broadcast_voice_freq(pair.beacon_voice_id, current_freq)
             
     def run(self) -> None:
         """Run the main event loop."""
@@ -517,6 +537,11 @@ def main() -> None:
         default=config.DEFAULT_F1,
         help=f"Initial base frequency in Hz (default: {config.DEFAULT_F1})",
     )
+    parser.add_argument(
+        "--broadcast",
+        action="store_true",
+        help=f"Broadcast state to visualizer on port {config.BROADCAST_PORT}",
+    )
     
     args = parser.parse_args()
     
@@ -533,6 +558,7 @@ def main() -> None:
     # Create and run the beacon
     beacon = HarmonicBeacon(
         mock_osc=args.mock,
+        broadcast=args.broadcast,
         verbose=not args.quiet,
     )
     beacon.f1.value = args.f1

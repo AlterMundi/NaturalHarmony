@@ -83,6 +83,9 @@ OSC_HOST = "127.0.0.1"
 #OSC_PORT = 9000
 OSC_PORT = 53280
 
+# Visualizer broadcast port (separate from Surge XT)
+BROADCAST_PORT = 9001
+
 # OSC address patterns for Surge XT
 # Note: These may need adjustment based on Surge XT's actual OSC implementation
 OSC_NOTE_ON = "/surge/noteon"

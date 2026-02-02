@@ -29,6 +29,8 @@ class OscSender:
     Uses pyliblo to communicate with Surge XT's OSC interface,
     enabling microtonal note control with exact frequencies.
     
+    Optionally broadcasts state to a visualizer on a separate port.
+    
     Surge XT OSC Note Format (v1.3+):
     - /fnote freq vel [noteID]     → note on at frequency
     - /fnote/rel freq vel [noteID] → note off
@@ -39,12 +41,16 @@ class OscSender:
         self,
         host: str = config.OSC_HOST,
         port: int = config.OSC_PORT,
+        broadcast: bool = False,
+        broadcast_port: int = config.BROADCAST_PORT,
     ):
         """Initialize the OSC sender.
         
         Args:
             host: Target host address
-            port: Target UDP port
+            port: Target UDP port for Surge XT
+            broadcast: Enable broadcasting to visualizer
+            broadcast_port: UDP port for visualizer broadcast
         """
         if not HAS_LIBLO:
             raise ImportError(
@@ -54,15 +60,21 @@ class OscSender:
         
         self.host = host
         self.port = port
+        self.broadcast = broadcast
+        self.broadcast_port = broadcast_port
         self._target: Optional[liblo.Address] = None
+        self._broadcast_target: Optional[liblo.Address] = None
         
     def open(self) -> None:
         """Open the OSC connection."""
         self._target = liblo.Address(self.host, self.port)
+        if self.broadcast:
+            self._broadcast_target = liblo.Address(self.host, self.broadcast_port)
         
     def close(self) -> None:
         """Close the OSC connection."""
         self._target = None
+        self._broadcast_target = None
         
     def send_note_on(
         self,
@@ -186,6 +198,79 @@ class OscSender:
             return
         liblo.send(self._target, address, *args)
     
+    # =========================================================================
+    # Broadcast methods for Visualizer
+    # =========================================================================
+    
+    def broadcast_f1(self, hz: float) -> None:
+        """Broadcast current f₁ to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(self._broadcast_target, "/beacon/f1", ("f", float(hz)))
+    
+    def broadcast_anchor(self, midi_note: int) -> None:
+        """Broadcast anchor note to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(self._broadcast_target, "/beacon/anchor", ("i", int(midi_note)))
+    
+    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float) -> None:
+        """Broadcast voice activation to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(
+            self._broadcast_target, 
+            "/beacon/voice/on",
+            ("i", int(voice_id)),
+            ("f", float(freq)),
+            ("f", float(gain)),
+        )
+    
+    def broadcast_voice_off(self, voice_id: int) -> None:
+        """Broadcast voice release to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(self._broadcast_target, "/beacon/voice/off", ("i", int(voice_id)))
+    
+    def broadcast_voice_freq(self, voice_id: int, freq: float) -> None:
+        """Broadcast frequency update (LFO sweep) to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(
+            self._broadcast_target,
+            "/beacon/voice/freq",
+            ("i", int(voice_id)),
+            ("f", float(freq)),
+        )
+    
+    def broadcast_key_on(self, note: int, velocity: int) -> None:
+        """Broadcast key press to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(
+            self._broadcast_target,
+            "/beacon/key/on",
+            ("i", int(note)),
+            ("i", int(velocity)),
+        )
+    
+    def broadcast_key_off(self, note: int) -> None:
+        """Broadcast key release to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(self._broadcast_target, "/beacon/key/off", ("i", int(note)))
+    
+    def broadcast_cc(self, cc_num: int, value: int) -> None:
+        """Broadcast CC change to visualizer."""
+        if self._broadcast_target is None:
+            return
+        liblo.send(
+            self._broadcast_target,
+            "/beacon/cc",
+            ("i", int(cc_num)),
+            ("i", int(value)),
+        )
+    
     @property
     def is_open(self) -> bool:
         """Whether the OSC connection is open."""
@@ -296,3 +381,28 @@ class MockOscSender(OscSender):
     def clear_log(self) -> None:
         """Clear the message log."""
         self._message_log.clear()
+    
+    # Broadcast stubs (no-op in mock mode)
+    def broadcast_f1(self, hz: float) -> None:
+        pass
+    
+    def broadcast_anchor(self, midi_note: int) -> None:
+        pass
+    
+    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float) -> None:
+        pass
+    
+    def broadcast_voice_off(self, voice_id: int) -> None:
+        pass
+    
+    def broadcast_voice_freq(self, voice_id: int, freq: float) -> None:
+        pass
+    
+    def broadcast_key_on(self, note: int, velocity: int) -> None:
+        pass
+    
+    def broadcast_key_off(self, note: int) -> None:
+        pass
+    
+    def broadcast_cc(self, cc_num: int, value: int) -> None:
+        pass
