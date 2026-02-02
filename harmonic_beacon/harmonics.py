@@ -205,32 +205,50 @@ def octave_reduce(n: int) -> tuple[float, int]:
     return ratio, x
 
 
-def playable_frequency(f1: float, n: int, target_octave: int) -> float:
-    """Calculate the octave-reduced (Playable voice) frequency.
+def get_standard_frequency(midi_note: int) -> float:
+    """Get the standard frequency for a MIDI note (A4=440Hz ET).
     
-    The Playable voice transposes the harmonic to the playing octave
-    using f₁ × (n / 2^x), then shifts to the target octave.
+    Args:
+        midi_note: MIDI note number
+        
+    Returns:
+        Frequency in Hz
+    """
+    return FREQ_A4 * (2.0 ** ((midi_note - MIDI_A4) / 12.0))
+
+
+def playable_frequency(f1: float, n: int, target_note: int) -> float:
+    """Calculate the adaptive playable frequency.
+    
+    Ensures the voice plays in the octave expected for the pressed key,
+    regardless of the raw harmonic frequency.
     
     Args:
         f1: Base frequency (fundamental) in Hz
         n: Harmonic number
-        target_octave: Target MIDI octave for the output (4 = C4-B4 range)
+        target_note: The MIDI note that was pressed (defines the target pitch)
         
     Returns:
-        Frequency in Hz, transposed to the target octave
+        Frequency in Hz, transposed to match the target key's octave
     """
-    ratio, _ = octave_reduce(n)
+    # 1. Calculate the raw harmonic frequency (The Beacon Voice)
+    raw_freq = beacon_frequency(f1, n)
     
-    # Base frequency in the fundamental's octave
-    base_freq = f1 * ratio
+    # 2. Calculate the standard expectation for this key (A4=440Hz)
+    target_freq = get_standard_frequency(target_note)
     
-    # Find what octave the fundamental is in
-    f1_midi = frequency_to_midi_float(f1)
-    f1_octave = int(f1_midi // 12) - 1
+    # 3. Handle edge case for silence
+    if raw_freq <= 0 or target_freq <= 0:
+        return 0.0
+        
+    # 4. Calculate how many octaves we are away from the target
+    # ratio = target / raw
+    # octaves = log2(ratio)
+    ratio = target_freq / raw_freq
+    octave_shift = round(math.log2(ratio))
     
-    # Shift to target octave
-    octave_shift = target_octave - f1_octave
-    return base_freq * (2.0 ** octave_shift)
+    # 5. Apply the shift
+    return raw_freq * (2.0 ** octave_shift)
 
 
 def frequency_to_midi_float(freq: float) -> float:

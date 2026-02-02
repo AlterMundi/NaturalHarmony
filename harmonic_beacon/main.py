@@ -188,7 +188,7 @@ class HarmonicBeacon:
         # Primary frequencies for the voice pair
         beacon_freq = beacon_freqs[0]
         playable_freq = playable_frequency(
-            current_f1, primary_n, config.PLAYABLE_TARGET_OCTAVE
+            current_f1, primary_n, note
         )
         
         # Set up LFO for harmonic chorus if multiple matches
@@ -267,7 +267,7 @@ class HarmonicBeacon:
             # Calculate new frequencies based on current f₁
             new_beacon_freq = beacon_frequency(current_f1, pair.harmonic_n)
             new_playable_freq = playable_frequency(
-                current_f1, pair.harmonic_n, config.PLAYABLE_TARGET_OCTAVE
+                current_f1, pair.harmonic_n, note
             )
             
             # Calculate semitone offsets from original frequencies

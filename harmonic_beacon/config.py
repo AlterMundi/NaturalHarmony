@@ -99,8 +99,7 @@ OSC_PARAMETER = "/surge/param"
 # Maximum simultaneous voices (Beacon + Playable = 2 per note)
 MAX_VOICES = 32
 
-# Target octave for "playable" voice (MIDI octave, where C4 = octave 4)
-PLAYABLE_TARGET_OCTAVE = 4
+
 
 # =============================================================================
 # Performance
