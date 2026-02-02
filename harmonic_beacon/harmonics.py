@@ -90,7 +90,8 @@ def get_harmonic_for_key(
     
     # Calculate the exact harmonic position
     n_exact = 2 ** (semitones / 12)
-    n_nearest = max(1, round(n_exact))
+    # Use floor (int) instead of round() for left-aligned mapping
+    n_nearest = max(1, int(n_exact))
     
     # Calculate cents deviation from the nearest harmonic
     if n_nearest > 0:
@@ -125,15 +126,17 @@ def get_harmonic_info(
         harmonic landing or an interval fallback.
     """
     semitones = midi_note - anchor_note
+    # Calculate the exact harmonic position
     n_exact = 2 ** (semitones / 12)
-    n_nearest = max(1, round(n_exact))
+    # Use floor (int) instead of round() for left-aligned mapping
+    n_nearest = max(1, int(n_exact))
     
-    # Calculate cents deviation
+    # Calculate cents deviation from the nearest harmonic
     if n_nearest > 0:
         perfect_semitones = 12 * math.log2(n_nearest)
         cents_error = (semitones - perfect_semitones) * 100
     else:
-        cents_error = 0
+        cents_error = 0.0
     
     is_direct = abs(cents_error) <= cents_threshold
     
@@ -141,6 +144,9 @@ def get_harmonic_info(
         n_used = n_nearest
         source = "direct"
     else:
+        # For fallback, we also want to align to the floor of the interval
+        # But HARMONIC_MAP is 12-tone, so this stays as chromatic lookup
+        # The key logic change is mainly for the "direct" hit detection above
         n_used = HARMONIC_MAP[midi_note % 12]
         source = "interval"
     
