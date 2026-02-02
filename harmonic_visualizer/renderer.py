@@ -294,8 +294,8 @@ class Renderer:
                 round(n), config.MAX_HARMONICS_DISPLAY, spine_y + 20, spine_h - 40
             )
             
-            # Draw from spine to each pressed key
-            for note in self.state.pressed_keys:
+            # Draw from spine to each pressed key (copy to avoid race condition)
+            for note in list(self.state.pressed_keys.keys()):
                 key_index = note - config.KEYBOARD_LOWEST_NOTE
                 if 0 <= key_index < config.KEYBOARD_KEYS:
                     key_x = kb_x + 20 + key_index * key_width + key_width / 2
