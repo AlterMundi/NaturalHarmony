@@ -241,6 +241,7 @@ class Renderer3D:
         # Texture for HUD
         self.hud_texture = self.ctx.texture(self.hud_size, 4)
         self.hud_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.hud_texture.swizzle = 'BGRA'  # Ensure correct color ordering if needed
     
     def stop(self) -> None:
         self.running = False
@@ -314,7 +315,7 @@ class Renderer3D:
         pygame.display.flip()
     
     def _render_hud(self) -> None:
-        """Render the HUD overlay with numeric values."""
+        """Render the HUD overlay with all numeric values."""
         if not self.hud_surface or not self.hud_texture:
             return
             
@@ -325,48 +326,72 @@ class Renderer3D:
         voices = self.state.get_all_visible_voices()
         active_count = len([v for v in voices if v.glow > 0.5])
         freqs = sorted(set(v.frequency for v in voices if v.glow > 0.5))
-        freq_str = ", ".join(f"{f:.0f}" for f in freqs[:4])
-        if len(freqs) > 4:
+        freq_str = ", ".join(f"{f:.0f}" for f in freqs[:3])
+        if len(freqs) > 3:
             freq_str += ".."
             
-        keys_pressed = len(self.state.pressed_keys)
+        keys_pressed = sorted(self.state.pressed_keys.keys())
+        key_str = ", ".join(str(k) for k in keys_pressed[:4])
+        if len(keys_pressed) > 4:
+            key_str += ".."
+            
+        # 3. Map CC values (using beacon/config.py constants)
+        # Tolerance (CC 67)
+        tol_cc = self.state.cc_values.get(67, 64)
+        tol_val = 1.0 + (tol_cc / 127.0) * (50.0 - 1.0)
         
-        # 3. Build HUD lines
+        # LFO Rate (CC 68)
+        lfo_cc = self.state.cc_values.get(68, 10)
+        lfo_val = 0.1 + (lfo_cc / 127.0) * (10.0 - 0.1)
+        
+        # Vibrato Mode (CC 23)
+        vib_cc = self.state.cc_values.get(23, 0)
+        vib_mode = "Stepped" if vib_cc >= 64 else "Smooth"
+        
+        # Aftertouch (CC 22, 30, 92)
+        at_mode_cc = self.state.cc_values.get(22, 0)
+        at_mode = "Key Anchor" if at_mode_cc >= 64 else "f1 Center"
+        
+        at_enabled_cc = self.state.cc_values.get(30, 0)
+        at_status = "ON" if at_enabled_cc >= 64 else "OFF"
+        
+        # 4. Build HUD lines
         lines = [
-            f"f1: {self.state.f1:.1f} Hz",
-            f"Active: {active_count} v, {keys_pressed} k",
-            f"Freqs: {freq_str}" if freqs else "",
+            f"f1: {self.state.f1:.1f} Hz | Anchor: {self.state.anchor_note}",
+            f"Voices: {active_count} | Keys: {key_str if keys_pressed else '--'}",
+            f"Freqs: {freq_str if freqs else '--'}",
+            f"Tolerance: {tol_val:.1f} cents",
+            f"LFO: {lfo_val:.2f} Hz | Mode: {vib_mode}",
+            f"Aftertouch: {at_status} | {at_mode}",
             "",
             "[F] Fullscreen [E] Energy [H] HUD",
         ]
         
         # Draw background panel
-        pygame.draw.rect(self.hud_surface, (15, 15, 30, 200), (0, 0, 300, 160), border_radius=10)
-        pygame.draw.rect(self.hud_surface, (100, 150, 255, 100), (0, 0, 300, 160), 2, border_radius=10)
+        pygame.draw.rect(self.hud_surface, (15, 15, 30, 220), (0, 0, self.hud_size[0], self.hud_size[1]), border_radius=10)
+        pygame.draw.rect(self.hud_surface, (100, 150, 255, 100), (0, 0, self.hud_size[0], self.hud_size[1]), 2, border_radius=10)
         
-        # 4. Render each line
+        # 5. Render each line
         y_offset = 15
         for line in lines:
             if line:
-                text_surface = self.font.render(line, True, (200, 230, 255))
-                self.hud_surface.blit(text_surface, (20, y_offset))
-                y_offset += 25
+                text_surface = self.font.render(line, True, (220, 240, 255))
+                self.hud_surface.blit(text_surface, (15, y_offset))
+                y_offset += 22
             else:
-                y_offset += 10
+                y_offset += 8
         
-        # 5. Upload PyGame surface to ModernGL texture
-        texture_data = pygame.image.tostring(self.hud_surface, 'RGBA', True)
+        # 6. Upload PyGame surface to ModernGL texture
+        # flipped=False because UVs are (0,0) at top-left
+        texture_data = pygame.image.tostring(self.hud_surface, 'RGBA', False)
         self.hud_texture.write(texture_data)
         
-        # 6. Render HUD quad
+        # 7. Render HUD quad
         self.hud_texture.use(0)
         self.hud_vao.render(moderngl.TRIANGLE_STRIP)
         
-        # Update window title as fallback/extra info
-        title_info = f"f1={self.state.f1:.1f}Hz"
-        if active_count > 0:
-            title_info += f" | {active_count} voices"
-        pygame.display.set_caption(f"Harmonic Visualizer | {title_info}")
+        # Update window title
+        pygame.display.set_caption(f"Harmonic Visualizer | f1={self.state.f1:.1f}Hz | {active_count}v")
     
     def _update_particles(self, dt: float) -> None:
         """Update particle positions and spawn new ones from active harmonics."""
