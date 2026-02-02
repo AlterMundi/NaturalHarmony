@@ -46,15 +46,15 @@ class OscReceiver:
         """Start the OSC receiver in a background thread."""
         self._server = liblo.Server(self.port)
         
-        # Register handlers for all beacon messages
-        self._server.add_method("/beacon/f1", "f", self._handle_f1)
-        self._server.add_method("/beacon/anchor", "i", self._handle_anchor)
-        self._server.add_method("/beacon/voice/on", "iffi", self._handle_voice_on)
-        self._server.add_method("/beacon/voice/off", "i", self._handle_voice_off)
-        self._server.add_method("/beacon/voice/freq", "if", self._handle_voice_freq)
-        self._server.add_method("/beacon/key/on", "ii", self._handle_key_on)
-        self._server.add_method("/beacon/key/off", "i", self._handle_key_off)
-        self._server.add_method("/beacon/cc", "ii", self._handle_cc)
+        # Register handlers for all beacon messages - use None for typespec to allow flexible parsing
+        self._server.add_method("/beacon/f1", None, self._handle_f1)
+        self._server.add_method("/beacon/anchor", None, self._handle_anchor)
+        self._server.add_method("/beacon/voice/on", None, self._handle_voice_on)
+        self._server.add_method("/beacon/voice/off", None, self._handle_voice_off)
+        self._server.add_method("/beacon/voice/freq", None, self._handle_voice_freq)
+        self._server.add_method("/beacon/key/on", None, self._handle_key_on)
+        self._server.add_method("/beacon/key/off", None, self._handle_key_off)
+        self._server.add_method("/beacon/cc", None, self._handle_cc)
         
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -88,14 +88,17 @@ class OscReceiver:
             voice_id, freq, gain, source_note, harmonic_n = args
         except ValueError:
             # Fallback for old format (4 arguments)
-            voice_id, freq, gain, source_note = args
-            harmonic_n = 1
+            try:
+                voice_id, freq, gain, source_note = args
+                harmonic_n = 1
+            except ValueError:
+                return
             
         self.state.voice_on(voice_id, freq, gain, source_note, harmonic_n)
     
     def _handle_voice_off(self, path: str, args: list) -> None:
         """Handle /beacon/voice/off message."""
-        self.state.voice_off(args[0])
+        self.state.voice_off(int(args[0]))
     
     def _handle_voice_freq(self, path: str, args: list) -> None:
         """Handle /beacon/voice/freq message."""
@@ -104,12 +107,19 @@ class OscReceiver:
     
     def _handle_key_on(self, path: str, args: list) -> None:
         """Handle /beacon/key/on message."""
-        note, velocity = args
-        self.state.key_on(note, velocity)
+        try:
+            note, velocity = args
+            self.state.key_on(note, velocity)
+        except ValueError:
+            pass
     
     def _handle_key_off(self, path: str, args: list) -> None:
         """Handle /beacon/key/off message."""
-        self.state.key_off(args[0])
+        try:
+            note = args[0]
+            self.state.key_off(note)
+        except (ValueError, IndexError):
+            pass
     
     def _handle_cc(self, path: str, args: list) -> None:
         """Handle /beacon/cc message."""
