@@ -168,7 +168,9 @@ class Renderer3D:
         self.hud_texture: Optional[moderngl.Texture] = None
         self.hud_vao: Optional[moderngl.VertexArray] = None
         self.hud_surface: Optional[pygame.Surface] = None
-        self.hud_size = (300, 200)  # Size of HUD overlay on screen
+        # Full screen HUD for better analysis
+        self.hud_size = (self.screen_width, self.screen_height) 
+        self.hud_padding = 40
         
     def start(self) -> None:
         pygame.init()
@@ -216,19 +218,18 @@ class Renderer3D:
         )
     
     def _create_hud_resources(self) -> None:
-        """Create resources for HUD overlay."""
-        # Quad for HUD (top-left corner in screen space)
-        # ModernGL screen coords are -1 to 1
-        # We want it in the top left, roughly 300x200 pixels
-        w = (self.hud_size[0] / self.screen_width) * 2
-        h = (self.hud_size[1] / self.screen_height) * 2
+        """Create resources for full-screen HUD overlay."""
+        # Update size in case of change
+        self.hud_size = (self.screen_width, self.screen_height)
+        self.hud_surface = pygame.Surface(self.hud_size, pygame.SRCALPHA)
         
         # Quad vertices: x, y, u, v
+        # NDC (-1 to 1) for full screen
         vertices = np.array([
             -1.0,  1.0,     0.0, 0.0,  # Top Left
-            -1.0+w, 1.0,     1.0, 0.0,  # Top Right
-            -1.0,  1.0-h,   0.0, 1.0,  # Bottom Left
-            -1.0+w, 1.0-h,   1.0, 1.0,  # Bottom Right
+             1.0,  1.0,     1.0, 0.0,  # Top Right
+            -1.0, -1.0,     0.0, 1.0,  # Bottom Left
+             1.0, -1.0,     1.0, 1.0,  # Bottom Right
         ], dtype='f4')
         
         vbo = self.ctx.buffer(vertices.tobytes())
@@ -293,9 +294,10 @@ class Renderer3D:
         self.ctx.screen.use()
         self.ctx.clear(0.02, 0.02, 0.05, 1.0)
         
-        # Orthographic projection using actual screen dimensions
-        aspect = self.screen_width / self.screen_height
-        proj = create_ortho_matrix(-aspect * 2, aspect * 2, -2, 2, -10, 10)
+        # Zoomed-in camera: map horizontal screen space exactly to our ruler width
+        # This makes the keyboard and ruler fill the width regardless of aspect ratio
+        half_w = self.ruler_width / 2
+        proj = create_ortho_matrix(-half_w, half_w, -2, 2, -10, 10)
         view = np.eye(4, dtype='f4')
         
         self.prog['projection'].write(proj.tobytes())
@@ -315,83 +317,123 @@ class Renderer3D:
         pygame.display.flip()
     
     def _render_hud(self) -> None:
-        """Render the HUD overlay with all numeric values."""
+        """Render the full-screen HUD overlay with all numeric values."""
         if not self.hud_surface or not self.hud_texture:
             return
             
-        # 1. Clear HUD surface (transparent)
-        self.hud_surface.fill((0, 0, 0, 0))
+        # 1. Clear HUD surface (mostly transparent)
+        self.hud_surface.fill((0, 0, 0, 10))  # Ultra-faint tinted background
         
-        # 2. Get active voice info
+        # 2. Collect and organized telemetry
         voices = self.state.get_all_visible_voices()
         active_count = len([v for v in voices if v.glow > 0.5])
         freqs = sorted(set(v.frequency for v in voices if v.glow > 0.5))
-        freq_str = ", ".join(f"{f:.0f}" for f in freqs[:3])
-        if len(freqs) > 3:
-            freq_str += ".."
-            
         keys_pressed = sorted(self.state.pressed_keys.keys())
-        key_str = ", ".join(str(k) for k in keys_pressed[:4])
-        if len(keys_pressed) > 4:
-            key_str += ".."
-            
-        # 3. Map CC values (using beacon/config.py constants)
-        # Tolerance (CC 67)
+        
+        # CC value mapping
         tol_cc = self.state.cc_values.get(67, 64)
         tol_val = 1.0 + (tol_cc / 127.0) * (50.0 - 1.0)
         
-        # LFO Rate (CC 68)
         lfo_cc = self.state.cc_values.get(68, 10)
         lfo_val = 0.1 + (lfo_cc / 127.0) * (10.0 - 0.1)
         
-        # Vibrato Mode (CC 23)
         vib_cc = self.state.cc_values.get(23, 0)
         vib_mode = "Stepped" if vib_cc >= 64 else "Smooth"
         
-        # Aftertouch (CC 22, 30, 92)
         at_mode_cc = self.state.cc_values.get(22, 0)
-        at_mode = "Key Anchor" if at_mode_cc >= 64 else "f1 Center"
+        at_aftertouch_mode = "Key Anchor" if at_mode_cc >= 64 else "f1 Center"
         
         at_enabled_cc = self.state.cc_values.get(30, 0)
         at_status = "ON" if at_enabled_cc >= 64 else "OFF"
         
-        # 4. Build HUD lines
-        lines = [
-            f"f1: {self.state.f1:.1f} Hz | Anchor: {self.state.anchor_note}",
-            f"Voices: {active_count} | Keys: {key_str if keys_pressed else '--'}",
-            f"Freqs: {freq_str if freqs else '--'}",
-            f"Tolerance: {tol_val:.1f} cents",
-            f"LFO: {lfo_val:.2f} Hz | Mode: {vib_mode}",
-            f"Aftertouch: {at_status} | {at_mode}",
+        at_thresh = self.state.cc_values.get(92, 64)
+        f1_mod_cc = self.state.cc_values.get(1, 0) # F1 modulation
+        
+        # 3. Create Columns
+        col1 = [
+            "CORE STATE",
+            "----------",
+            f"f1 Frequency: {self.state.f1:.2f} Hz",
+            f"f1 Mod CC (1): {f1_mod_cc}",
+            f"Anchor Note:  {self.state.anchor_note}",
             "",
-            "[F] Fullscreen [E] Energy [H] HUD",
+            "ACTIVE VOICES",
+            "-------------",
+            f"Voice Count: {active_count}",
+            f"Pressed:     {len(keys_pressed)}",
+            f"Keys: {', '.join(map(str, keys_pressed)) if keys_pressed else '--'}",
         ]
         
-        # Draw background panel
-        pygame.draw.rect(self.hud_surface, (15, 15, 30, 220), (0, 0, self.hud_size[0], self.hud_size[1]), border_radius=10)
-        pygame.draw.rect(self.hud_surface, (100, 150, 255, 100), (0, 0, self.hud_size[0], self.hud_size[1]), 2, border_radius=10)
+        # Formatted frequency list (multi-line if needed)
+        col1_freqs = ["Frequencies:"]
+        chunk_size = 4
+        for i in range(0, len(freqs), chunk_size):
+            chunk = freqs[i:i+chunk_size]
+            col1_freqs.append("  " + ", ".join(f"{f:.1f}" for f in chunk))
+        if not freqs: col1_freqs.append("  --")
+        col1.extend(col1_freqs)
         
-        # 5. Render each line
-        y_offset = 15
-        for line in lines:
-            if line:
-                text_surface = self.font.render(line, True, (220, 240, 255))
-                self.hud_surface.blit(text_surface, (15, y_offset))
-                y_offset += 22
-            else:
-                y_offset += 8
+        col2 = [
+            "BEACON SETTINGS",
+            "---------------",
+            f"Tolerance (CC 67): {tol_val:.1f} cents",
+            f"LFO Rate (CC 68):  {lfo_val:.2f} Hz",
+            f"Vibrato (CC 23):   {vib_mode}",
+            "",
+            "AFTERTOUCH",
+            "----------",
+            f"Status (CC 30):    {at_status}",
+            f"Mode (CC 22):      {at_aftertouch_mode}",
+            f"Threshold (CC 92): {at_thresh}",
+            "",
+            "CONTROLS",
+            "--------",
+            "[F] Fullscreen / Windowed",
+            "[H] Toggle HUD Overlay",
+            "[E] Toggle Energy Lines",
+            "[ESC] Quit Visualizer"
+        ]
         
-        # 6. Upload PyGame surface to ModernGL texture
-        # flipped=False because UVs are (0,0) at top-left
+        # 4. Draw Panels (Corner background)
+        # Left Panel
+        pygame.draw.rect(self.hud_surface, (15, 15, 30, 200), (20, 20, 360, 480), border_radius=10)
+        pygame.draw.rect(self.hud_surface, (100, 150, 255, 80), (20, 20, 360, 480), 2, border_radius=10)
+        
+        # Right Panel
+        pygame.draw.rect(self.hud_surface, (15, 15, 30, 200), (400, 20, 360, 480), border_radius=10)
+        pygame.draw.rect(self.hud_surface, (100, 155, 255, 80), (400, 20, 360, 480), 2, border_radius=10)
+        
+        # 5. Render Text
+        def render_col(lines, x_pos):
+            y_offset = 40
+            for line in lines:
+                color = (200, 230, 255)
+                if "-" in line and len(line) > 3: color = (100, 150, 255) # Dim separators
+                if ":" in line: 
+                    parts = line.split(":", 1)
+                    # Label
+                    lbl = self.font.render(parts[0] + ":", True, (150, 180, 255))
+                    self.hud_surface.blit(lbl, (x_pos, y_offset))
+                    # Value
+                    val = self.font.render(parts[1], True, (220, 240, 255))
+                    self.hud_surface.blit(val, (x_pos + 170, y_offset))
+                else:
+                    text_surface = self.font.render(line, True, color)
+                    self.hud_surface.blit(text_surface, (x_pos, y_offset))
+                y_offset += 24
+                
+        render_col(col1, 40)
+        render_col(col2, 420)
+        
+        # 6. Upload and Render
         texture_data = pygame.image.tostring(self.hud_surface, 'RGBA', False)
         self.hud_texture.write(texture_data)
         
-        # 7. Render HUD quad
         self.hud_texture.use(0)
         self.hud_vao.render(moderngl.TRIANGLE_STRIP)
         
-        # Update window title
-        pygame.display.set_caption(f"Harmonic Visualizer | f1={self.state.f1:.1f}Hz | {active_count}v")
+        # Keep title minimal
+        pygame.display.set_caption(f"Harmonic Visualizer | f1={self.state.f1:.1f}Hz")
     
     def _update_particles(self, dt: float) -> None:
         """Update particle positions and spawn new ones from active harmonics."""
