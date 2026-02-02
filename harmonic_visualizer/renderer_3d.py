@@ -1,4 +1,4 @@
-"""ModernGL-based 3D renderer - Piano Roll Style."""
+"""ModernGL-based 3D renderer - Piano Roll Style with Frequency Ruler."""
 
 import math
 from typing import Optional
@@ -17,6 +17,14 @@ except ImportError:
 
 from . import config
 from .state import VisualizerState
+
+
+# Frequency range for the ruler
+FREQ_MIN = 20.0      # 20 Hz (lower limit of human hearing)
+FREQ_MAX = 20000.0   # 20 kHz (upper limit)
+
+# Reference frequencies to mark on ruler
+FREQ_MARKERS = [20, 50, 100, 200, 440, 1000, 2000, 5000, 10000, 20000]
 
 
 # Vertex shader
@@ -70,6 +78,22 @@ void main() {
 """
 
 
+def freq_to_x(freq: float, width: float = 3.5) -> float:
+    """Convert frequency to X position using logarithmic scale."""
+    if freq <= FREQ_MIN:
+        return -width / 2
+    if freq >= FREQ_MAX:
+        return width / 2
+    
+    # Logarithmic mapping
+    log_min = math.log10(FREQ_MIN)
+    log_max = math.log10(FREQ_MAX)
+    log_freq = math.log10(freq)
+    
+    t = (log_freq - log_min) / (log_max - log_min)
+    return t * width - width / 2
+
+
 def create_ortho_matrix(left: float, right: float, bottom: float, top: float, 
                         near: float, far: float) -> np.ndarray:
     """Create orthographic projection matrix."""
@@ -82,7 +106,7 @@ def create_ortho_matrix(left: float, right: float, bottom: float, top: float,
 
 
 class Renderer3D:
-    """Piano roll style 3D renderer."""
+    """Piano roll style 3D renderer with frequency ruler."""
     
     def __init__(self, state: VisualizerState):
         if not HAS_MODERNGL:
@@ -101,6 +125,11 @@ class Renderer3D:
         
         # Animation
         self.time = 0.0
+        
+        # Layout (Y positions)
+        self.keyboard_y = 1.2      # Keyboard at top
+        self.ruler_y = -0.8        # Frequency ruler below
+        self.ruler_width = 3.5
         
     def start(self) -> None:
         pygame.init()
@@ -153,89 +182,150 @@ class Renderer3D:
         self.ctx.screen.use()
         self.ctx.clear(0.02, 0.02, 0.05, 1.0)
         
-        # Orthographic projection for clean 2.5D look
+        # Orthographic projection
         aspect = config.WINDOW_WIDTH / config.WINDOW_HEIGHT
         proj = create_ortho_matrix(-aspect * 2, aspect * 2, -2, 2, -10, 10)
-        
-        # Identity view (camera at origin looking at -Z)
         view = np.eye(4, dtype='f4')
         
         self.prog['projection'].write(proj.tobytes())
         self.prog['view'].write(view.tobytes())
         
-        # Render components
-        self._render_harmonic_bars()
+        # Render components (keyboard on top, ruler below)
+        self._render_keyboard()
+        self._render_frequency_ruler()
+        self._render_harmonic_slots()
         
         if self.show_energy_lines:
             self._render_particles()
         
-        self._render_keyboard()
-        
         pygame.display.flip()
     
     def _update_particles(self, dt: float) -> None:
-        """Update particle positions and spawn new ones."""
+        """Update particle positions and spawn new ones from active harmonics."""
         # Update existing particles
         new_particles = []
         for p in self.particles:
             p['life'] -= dt
             if p['life'] > 0:
-                # Move upward
+                # Move outward/upward from harmonic slots
                 p['y'] += p['vy'] * dt
                 p['x'] += p['vx'] * dt
+                # Slow down over time
+                p['vx'] *= 0.98
+                p['vy'] *= 0.98
                 new_particles.append(p)
         self.particles = new_particles
         
-        # Spawn particles from active voices
+        # Spawn particles from active harmonic slots
         f1 = self.state.f1
         for voice in self.state.get_all_visible_voices():
-            if voice.glow < 0.3:
+            if voice.glow < 0.2:
                 continue
+            
+            # Get actual frequency position on ruler
+            voice_freq = voice.frequency
+            if FREQ_MIN <= voice_freq <= FREQ_MAX:
+                slot_x = freq_to_x(voice_freq, self.ruler_width)
                 
-            # Find harmonic position
-            if f1 > 0:
-                n = voice.frequency / f1
-                if 1 <= n <= config.MAX_HARMONICS_DISPLAY:
-                    # X position based on harmonic
-                    target_x = (n / config.MAX_HARMONICS_DISPLAY) * 3.0 - 1.5
+                # Spawn particles from the harmonic slot
+                if random.random() < 0.4 * voice.glow:
+                    # Random spread direction
+                    angle = random.uniform(-math.pi * 0.8, math.pi * 0.8)
+                    speed = 0.5 + random.random() * 0.8
                     
-                    # Spawn from pressed keys
-                    for note in list(self.state.pressed_keys.keys()):
-                        key_idx = note - config.KEYBOARD_LOWEST_NOTE
-                        if 0 <= key_idx < config.KEYBOARD_KEYS:
-                            key_x = (key_idx / config.KEYBOARD_KEYS) * 3.0 - 1.5
-                            
-                            # Random chance to spawn
-                            if random.random() < 0.3:
-                                self.particles.append({
-                                    'x': key_x,
-                                    'y': -1.2,  # Start at keyboard
-                                    'vx': (target_x - key_x) * 0.5,
-                                    'vy': 1.5 + random.random() * 0.5,
-                                    'life': 0.8 + random.random() * 0.4,
-                                    'glow': voice.glow,
-                                    'harmonic': n,
-                                })
+                    self.particles.append({
+                        'x': slot_x + random.uniform(-0.02, 0.02),
+                        'y': self.ruler_y + random.uniform(-0.1, 0.1),
+                        'vx': math.cos(angle) * speed * 0.3,
+                        'vy': math.sin(angle) * speed + 0.5,  # Bias upward
+                        'life': 0.5 + random.random() * 0.5,
+                        'glow': voice.glow,
+                        'freq': voice_freq,
+                    })
         
         # Limit particles
         if len(self.particles) > 500:
             self.particles = self.particles[-500:]
     
-    def _render_harmonic_bars(self) -> None:
-        """Render horizontal harmonic bars at top."""
+    def _render_frequency_ruler(self) -> None:
+        """Render the frequency ruler background with markers."""
+        vertices = []
+        
+        ruler_height = 0.08
+        y = self.ruler_y
+        
+        # Background bar
+        r, g, b = 0.1, 0.1, 0.15
+        a = 0.9
+        glow = 0.0
+        
+        corners = [
+            (-self.ruler_width/2, y - ruler_height/2, -0.1),
+            ( self.ruler_width/2, y - ruler_height/2, -0.1),
+            ( self.ruler_width/2, y + ruler_height/2, -0.1),
+            (-self.ruler_width/2, y - ruler_height/2, -0.1),
+            ( self.ruler_width/2, y + ruler_height/2, -0.1),
+            (-self.ruler_width/2, y + ruler_height/2, -0.1),
+        ]
+        
+        for pos in corners:
+            vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
+        
+        # Frequency marker ticks
+        for freq in FREQ_MARKERS:
+            x = freq_to_x(freq, self.ruler_width)
+            tick_height = 0.15
+            tick_width = 0.01
+            
+            # Dim color for markers
+            r, g, b = 0.3, 0.3, 0.4
+            a = 0.7
+            
+            tick_corners = [
+                (x - tick_width/2, y - tick_height, 0),
+                (x + tick_width/2, y - tick_height, 0),
+                (x + tick_width/2, y + tick_height, 0),
+                (x - tick_width/2, y - tick_height, 0),
+                (x + tick_width/2, y + tick_height, 0),
+                (x - tick_width/2, y + tick_height, 0),
+            ]
+            
+            for pos in tick_corners:
+                vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
+        
+        if vertices:
+            vertices = np.array(vertices, dtype='f4')
+            vbo = self.ctx.buffer(vertices.tobytes())
+            vao = self.ctx.vertex_array(
+                self.prog,
+                [(vbo, '3f 4f 1f', 'in_position', 'in_color', 'in_glow')]
+            )
+            vao.render(moderngl.TRIANGLES)
+            vbo.release()
+    
+    def _render_harmonic_slots(self) -> None:
+        """Render harmonic slots at their actual frequency positions."""
         f1 = self.state.f1
         visible_voices = self.state.get_all_visible_voices()
         
         vertices = []
         
-        bar_y = 1.2  # Top area
-        bar_height = 0.15
+        slot_height = 0.4
+        y = self.ruler_y
         
-        for n in range(1, config.MAX_HARMONICS_DISPLAY + 1):
-            # X position (spread horizontally)
-            x = (n / config.MAX_HARMONICS_DISPLAY) * 3.0 - 1.5
+        # Render slots for all harmonics up to 20kHz
+        n = 1
+        while True:
+            freq = f1 * n
+            if freq > FREQ_MAX:
+                break
+            if freq < FREQ_MIN:
+                n += 1
+                continue
             
-            # Check if active
+            x = freq_to_x(freq, self.ruler_width)
+            
+            # Check if this harmonic is active
             glow = 0.0
             for voice in visible_voices:
                 if f1 > 0:
@@ -243,31 +333,35 @@ class Renderer3D:
                     if abs(voice_n - n) < 0.5:
                         glow = max(glow, voice.glow * voice.gain)
             
-            # Bar width based on harmonic
-            bar_width = 0.08 * (1 - n * 0.01)
+            # Slot width decreases with frequency (log scale)
+            slot_width = 0.04 * (1 - math.log10(n + 1) / 3)
+            slot_width = max(0.015, slot_width)
             
-            # Color gradient: warm low, cool high
-            t = n / config.MAX_HARMONICS_DISPLAY
-            r = 0.2 + (1-t) * 0.2 + glow * 0.4
-            g = 0.3 + glow * 0.5
-            b = 0.5 + t * 0.3 + glow * 0.2
-            a = 0.7 + glow * 0.3
+            # Color: gradient based on harmonic number
+            t = min(1.0, n / 32.0)
+            r = 0.2 + (1-t) * 0.15 + glow * 0.5
+            g = 0.25 + glow * 0.5
+            b = 0.5 + t * 0.3 + glow * 0.3
+            a = 0.6 + glow * 0.4
             
-            # Extend bar down when active
-            height = bar_height + glow * 0.3
+            # Height extends when active
+            height = slot_height * (0.5 + glow * 0.5)
             
-            # Create bar
-            corners = [
-                (x - bar_width/2, bar_y - height, 0),
-                (x + bar_width/2, bar_y - height, 0),
-                (x + bar_width/2, bar_y, 0),
-                (x - bar_width/2, bar_y - height, 0),
-                (x + bar_width/2, bar_y, 0),
-                (x - bar_width/2, bar_y, 0),
+            slot_corners = [
+                (x - slot_width/2, y - height/2, 0),
+                (x + slot_width/2, y - height/2, 0),
+                (x + slot_width/2, y + height/2, 0),
+                (x - slot_width/2, y - height/2, 0),
+                (x + slot_width/2, y + height/2, 0),
+                (x - slot_width/2, y + height/2, 0),
             ]
             
-            for pos in corners:
+            for pos in slot_corners:
                 vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
+            
+            n += 1
+            if n > 200:  # Safety limit
+                break
         
         if vertices:
             vertices = np.array(vertices, dtype='f4')
@@ -289,7 +383,6 @@ class Renderer3D:
             alpha = min(1.0, p['life'] * 2)
             glow = p['glow'] * alpha
             
-            # Particle color
             r, g, b = 0.3, 0.8, 1.0
             a = alpha * 0.8
             
@@ -306,15 +399,15 @@ class Renderer3D:
             vbo.release()
     
     def _render_keyboard(self) -> None:
-        """Render piano keyboard at bottom."""
+        """Render piano keyboard at top."""
         vertices = []
         
         key_count = config.KEYBOARD_KEYS
         total_width = 3.0
         key_width = total_width / key_count
-        keyboard_y = -1.5
-        white_height = 0.5
-        black_height = 0.35
+        keyboard_y = self.keyboard_y
+        white_height = 0.45
+        black_height = 0.3
         
         # Render white keys first
         for i in range(key_count):
@@ -338,12 +431,12 @@ class Renderer3D:
             a = 1.0
             
             corners = [
-                (x, keyboard_y, 0),
+                (x, keyboard_y - white_height, 0),
+                (x + key_width * 0.95, keyboard_y - white_height, 0),
                 (x + key_width * 0.95, keyboard_y, 0),
-                (x + key_width * 0.95, keyboard_y + white_height, 0),
+                (x, keyboard_y - white_height, 0),
+                (x + key_width * 0.95, keyboard_y, 0),
                 (x, keyboard_y, 0),
-                (x + key_width * 0.95, keyboard_y + white_height, 0),
-                (x, keyboard_y + white_height, 0),
             ]
             
             for pos in corners:
@@ -371,12 +464,12 @@ class Renderer3D:
             a = 1.0
             
             corners = [
-                (x, keyboard_y + white_height - black_height, 0.1),
-                (x + key_width * 0.7, keyboard_y + white_height - black_height, 0.1),
-                (x + key_width * 0.7, keyboard_y + white_height, 0.1),
-                (x, keyboard_y + white_height - black_height, 0.1),
-                (x + key_width * 0.7, keyboard_y + white_height, 0.1),
-                (x, keyboard_y + white_height, 0.1),
+                (x, keyboard_y - black_height, 0.1),
+                (x + key_width * 0.7, keyboard_y - black_height, 0.1),
+                (x + key_width * 0.7, keyboard_y, 0.1),
+                (x, keyboard_y - black_height, 0.1),
+                (x + key_width * 0.7, keyboard_y, 0.1),
+                (x, keyboard_y, 0.1),
             ]
             
             for pos in corners:
