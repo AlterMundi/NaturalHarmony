@@ -24,6 +24,7 @@ from .harmonics import (
     frequency_to_midi_float,
 )
 from .key_mapper import KeyMapper
+from .octave_borrower import OctaveBorrower
 from .lfo import HarmonicLFO, VibratoMode
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
@@ -145,6 +146,9 @@ class HarmonicBeacon:
             max_harmonic=config.MAX_HARMONIC,
         )
         
+        # Octave borrower for inactive keys
+        self._borrower = OctaveBorrower(self._key_mapper)
+        
     def start(self) -> None:
         """Start the Harmonic Beacon."""
         # Open MIDI port
@@ -180,17 +184,27 @@ class HarmonicBeacon:
         """Handle a Note-On event with tolerance-based harmonic mapping."""
         current_f1 = self.f1.value
         
-        # Use KeyMapper for clean symmetric tolerance matching
+        # Try direct match first
         match = self._key_mapper.get_match(note)
+        borrowed = None
         
         if match is None:
-            # No harmonic within tolerance - skip this note
-            if self.verbose:
-                print(f"♪ Note ON: MIDI {note} → (no harmonic match at {self.tolerance:.0f}¢)")
-            return
+            # No direct match - try octave borrowing
+            borrowed = self._borrower.borrow(note)
+            if borrowed is None:
+                # No match even with borrowing - skip
+                if self.verbose:
+                    print(f"♪ Note ON: MIDI {note} → (no harmonic match)")
+                return
         
-        primary_n = match.harmonic_n
-        beacon_freq = current_f1 * primary_n  # f1 * n
+        # Get harmonic info from direct match or borrowed
+        if match is not None:
+            primary_n = match.harmonic_n
+            beacon_freq = current_f1 * primary_n
+        else:
+            primary_n = borrowed.harmonic_n
+            beacon_freq = current_f1 * primary_n  # Use current f1, not stored
+        
         playable_freq = playable_frequency(current_f1, primary_n, note)
         
         # Set up LFO (single harmonic, no chorus needed)
@@ -217,8 +231,11 @@ class HarmonicBeacon:
         self.osc.broadcast_voice_on(playable_id, playable_freq, vel_normalized, note, primary_n)
         
         if self.verbose:
-            sign = '+' if match.deviation_cents >= 0 else ''
-            print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
+            if match is not None:
+                sign = '+' if match.deviation_cents >= 0 else ''
+                print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
+            else:
+                print(f"♪ Note ON: MIDI {note} → n={primary_n} [borrowed from MIDI {borrowed.borrowed_midi}]")
             print(f"    Beacon:   {beacon_freq:.2f} Hz")
             print(f"    Playable: {playable_freq:.2f} Hz")
             
