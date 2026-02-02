@@ -321,48 +321,38 @@ class Renderer3D:
             vbo.release()
     
     def _render_harmonic_slots(self) -> None:
-        """Render harmonic slots at their actual frequency positions."""
-        f1 = self.state.f1
+        """Render slots for actually active voice frequencies."""
         visible_voices = self.state.get_all_visible_voices()
+        
+        if not visible_voices:
+            return
         
         vertices = []
         
-        slot_height = 0.4
+        slot_height = 0.5
+        slot_width = 0.025
         y = self.ruler_y
         
-        # Render slots for all harmonics up to 20kHz
-        n = 1
-        while True:
-            freq = f1 * n
-            if freq > FREQ_MAX:
-                break
-            if freq < FREQ_MIN:
-                n += 1
+        # Render a slot for each active voice at its actual frequency
+        for voice in visible_voices:
+            freq = voice.frequency
+            
+            # Skip if outside visible range
+            if freq < FREQ_MIN or freq > FREQ_MAX:
                 continue
             
             x = freq_to_x(freq, self.ruler_width)
+            glow = voice.glow * voice.gain
             
-            # Check if this harmonic is active
-            glow = 0.0
-            for voice in visible_voices:
-                if f1 > 0:
-                    voice_n = voice.frequency / f1
-                    if abs(voice_n - n) < 0.5:
-                        glow = max(glow, voice.glow * voice.gain)
-            
-            # Slot width decreases with frequency (log scale)
-            slot_width = 0.04 * (1 - math.log10(n + 1) / 3)
-            slot_width = max(0.015, slot_width)
-            
-            # Color: gradient based on harmonic number
-            t = min(1.0, n / 32.0)
-            r = 0.2 + (1-t) * 0.15 + glow * 0.5
-            g = 0.25 + glow * 0.5
+            # Color based on frequency (warm low, cool high)
+            t = (math.log10(freq) - math.log10(FREQ_MIN)) / (math.log10(FREQ_MAX) - math.log10(FREQ_MIN))
+            r = 0.3 + (1-t) * 0.2 + glow * 0.4
+            g = 0.35 + glow * 0.5
             b = 0.5 + t * 0.3 + glow * 0.3
-            a = 0.6 + glow * 0.4
+            a = 0.7 + glow * 0.3
             
-            # Height extends when active
-            height = slot_height * (0.5 + glow * 0.5)
+            # Height based on activity
+            height = slot_height * (0.6 + glow * 0.4)
             
             slot_corners = [
                 (x - slot_width/2, y - height/2, 0),
@@ -375,10 +365,6 @@ class Renderer3D:
             
             for pos in slot_corners:
                 vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
-            
-            n += 1
-            if n > 200:  # Safety limit
-                break
         
         if vertices:
             vertices = np.array(vertices, dtype='f4')
