@@ -128,6 +128,10 @@ class HarmonicBeacon:
         self.aftertouch_enabled = True  # Can be toggled off with CC30
         self.aftertouch_threshold = config.DEFAULT_AFTERTOUCH_THRESHOLD
         
+        # Transpose layer settings (for borrowed keys)
+        self.transpose_layer_enabled = True  # Toggled by CC29
+        self.transpose_mix = config.DEFAULT_TRANSPOSE_MIX  # 0=beacon, 1=transposed
+        
         # Per-note LFOs for harmonic chorus
         self._note_lfos: dict[int, HarmonicLFO] = {}
         self._last_update_time = time.time()
@@ -201,9 +205,12 @@ class HarmonicBeacon:
         if match is not None:
             primary_n = match.harmonic_n
             beacon_freq = current_f1 * primary_n
+            transposed_freq = None  # No transposition for direct matches
         else:
             primary_n = borrowed.harmonic_n
-            beacon_freq = current_f1 * primary_n  # Use current f1, not stored
+            beacon_freq = current_f1 * primary_n
+            # Calculate octave-transposed frequency (bring down to played octave)
+            transposed_freq = beacon_freq / (2 ** borrowed.octaves_borrowed)
         
         playable_freq = playable_frequency(current_f1, primary_n, note)
         
@@ -211,6 +218,15 @@ class HarmonicBeacon:
         lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
         lfo.set_harmonics([beacon_freq])
         self._note_lfos[note] = lfo
+        
+        # Calculate velocities based on mix (for borrowed keys with transpose layer)
+        if transposed_freq is not None and self.transpose_layer_enabled:
+            # Mix: 0.0 = full beacon, 1.0 = full transposed
+            beacon_vel = velocity * (1.0 - self.transpose_mix)
+            transposed_vel = velocity * self.transpose_mix
+        else:
+            beacon_vel = velocity
+            transposed_vel = 0
         
         # Allocate voices
         beacon_id, playable_id = self.voices.note_on(
@@ -220,15 +236,22 @@ class HarmonicBeacon:
             original_f1=current_f1,
             harmonic_n=primary_n,
         )
-        vel_normalized = velocity / 127.0
+        beacon_vel_normalized = beacon_vel / 127.0
         
-        self.osc.send_note_on(beacon_id, beacon_freq, vel_normalized)
-        self.osc.send_note_on(playable_id, playable_freq, vel_normalized)
+        self.osc.send_note_on(beacon_id, beacon_freq, beacon_vel_normalized)
+        self.osc.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
+        
+        # Send transposed layer if enabled for borrowed keys
+        if transposed_freq is not None and self.transpose_layer_enabled and transposed_vel > 0:
+            transposed_vel_normalized = transposed_vel / 127.0
+            # Use playable_id + 1000 as a separate voice ID for transposed layer
+            transposed_id = playable_id + 1000
+            self.osc.send_note_on(transposed_id, transposed_freq, transposed_vel_normalized)
         
         # Broadcast to visualizer
         self.osc.broadcast_key_on(note, velocity)
-        self.osc.broadcast_voice_on(beacon_id, beacon_freq, vel_normalized, note, primary_n)
-        self.osc.broadcast_voice_on(playable_id, playable_freq, vel_normalized, note, primary_n)
+        self.osc.broadcast_voice_on(beacon_id, beacon_freq, beacon_vel_normalized, note, primary_n)
+        self.osc.broadcast_voice_on(playable_id, playable_freq, beacon_vel_normalized, note, primary_n)
         
         if self.verbose:
             if match is not None:
@@ -236,6 +259,8 @@ class HarmonicBeacon:
                 print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
             else:
                 print(f"♪ Note ON: MIDI {note} → n={primary_n} [borrowed from MIDI {borrowed.borrowed_midi}]")
+                if self.transpose_layer_enabled:
+                    print(f"    + Transposed: {transposed_freq:.2f} Hz (mix: {self.transpose_mix:.0%})")
             print(f"    Beacon:   {beacon_freq:.2f} Hz")
             print(f"    Playable: {playable_freq:.2f} Hz")
             
@@ -441,6 +466,31 @@ class HarmonicBeacon:
         if self.verbose:
             print(f"🎚️ Aftertouch threshold: {cc_value}")
     
+    def _handle_transpose_layer_toggle(self, cc_value: int) -> None:
+        """Handle transpose layer toggle (CC29).
+        
+        Args:
+            cc_value: CC value (0=disabled, 127=enabled)
+        """
+        enabled = cc_value >= 64
+        if enabled != self.transpose_layer_enabled:
+            self.transpose_layer_enabled = enabled
+            if self.verbose:
+                state = "ON ✓" if enabled else "OFF ✗"
+                print(f"🎹 Transpose Layer: {state}")
+    
+    def _handle_transpose_mix_change(self, cc_value: int) -> None:
+        """Handle transpose mix CC (CC90).
+        
+        Args:
+            cc_value: CC value (0=beacon only, 127=transposed only, 64=equal)
+        """
+        self.transpose_mix = cc_value / 127.0
+        if self.verbose:
+            beacon_pct = int((1.0 - self.transpose_mix) * 100)
+            transposed_pct = int(self.transpose_mix * 100)
+            print(f"🎚️ Transpose Mix: {beacon_pct}% beacon / {transposed_pct}% transposed")
+    
     def _update_lfo_chorus(self, dt: float) -> None:
         """Update LFO chorus for all active notes.
         
@@ -522,6 +572,12 @@ class HarmonicBeacon:
                     
                     elif self.midi.is_aftertouch_threshold_control(msg):
                         self._handle_aftertouch_threshold_change(msg.value)
+                    
+                    elif self.midi.is_transpose_layer_toggle(msg):
+                        self._handle_transpose_layer_toggle(msg.value)
+                    
+                    elif self.midi.is_transpose_mix_control(msg):
+                        self._handle_transpose_mix_change(msg.value)
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(config.MIDI_POLL_INTERVAL)

@@ -71,6 +71,15 @@ AFTERTOUCH_ENABLE_CC = 30
 AFTERTOUCH_THRESHOLD_CC = 92
 DEFAULT_AFTERTOUCH_THRESHOLD = 64
 
+# CC number for transpose layer toggle (CC29)
+# OFF = Only borrowed harmonic, ON = Also play octave-transposed version
+TRANSPOSE_LAYER_CC = 29
+
+# CC number for transpose mix slider (CC90)
+# 0 = Beacon only, 127 = Transposed only, 64 = Equal mix
+TRANSPOSE_MIX_CC = 90
+DEFAULT_TRANSPOSE_MIX = 0.5  # Equal mix (0.0 to 1.0)
+
 # Maximum harmonic to search when finding matches
 MAX_HARMONIC = 128
 

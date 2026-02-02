@@ -158,6 +158,14 @@ class MidiHandler:
         """Check if a message is the aftertouch threshold CC (CC92)."""
         return msg.type == "control_change" and msg.control == config.AFTERTOUCH_THRESHOLD_CC
     
+    def is_transpose_layer_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is the transpose layer toggle CC (CC29)."""
+        return msg.type == "control_change" and msg.control == config.TRANSPOSE_LAYER_CC
+    
+    def is_transpose_mix_control(self, msg: mido.Message) -> bool:
+        """Check if a message is the transpose mix CC (CC90)."""
+        return msg.type == "control_change" and msg.control == config.TRANSPOSE_MIX_CC
+    
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
         return NoteEvent(
