@@ -202,17 +202,28 @@ class Renderer3D:
     
     def _update_particles(self, dt: float) -> None:
         """Update particle positions and spawn new ones from active harmonics."""
+        keyboard_bottom = self.keyboard_y - 0.45  # Bottom of keyboard
+        
         # Update existing particles
         new_particles = []
         for p in self.particles:
             p['life'] -= dt
             if p['life'] > 0:
-                # Move toward target key
-                p['y'] += p['vy'] * dt
-                p['x'] += p['vx'] * dt
-                # Slow down over time
-                p['vx'] *= 0.97
-                p['vy'] *= 0.97
+                # Check if reached keyboard
+                if p['y'] >= keyboard_bottom:
+                    # Particle has landed - keep it briefly then fade
+                    p['x'] = p['target_x']  # Snap to exact target
+                    p['y'] = keyboard_bottom
+                    p['vx'] = 0
+                    p['vy'] = 0
+                    p['life'] = min(p['life'], 0.2)  # Quick fade after landing
+                else:
+                    # Move toward target key
+                    p['y'] += p['vy'] * dt
+                    p['x'] += p['vx'] * dt
+                    # Slow down less so they reach target
+                    p['vx'] *= 0.99
+                    p['vy'] *= 0.99
                 new_particles.append(p)
         self.particles = new_particles
         
@@ -233,20 +244,18 @@ class Renderer3D:
                     
                     # Spawn particles flowing toward the key
                     if random.random() < 0.35 * voice.glow:
-                        # Direction from harmonic slot toward key
+                        # Calculate velocity to reach target in ~0.5 seconds
+                        travel_time = 0.5 + random.random() * 0.2
                         dx = key_x - slot_x
-                        dy = self.keyboard_y - 0.3 - self.ruler_y  # Upward to keyboard
-                        
-                        # Normalize and add some random spread
-                        dist = math.sqrt(dx*dx + dy*dy) + 0.001
-                        speed = 1.2 + random.random() * 0.5
+                        dy = keyboard_bottom - self.ruler_y
                         
                         self.particles.append({
                             'x': slot_x + random.uniform(-0.02, 0.02),
                             'y': self.ruler_y + random.uniform(-0.05, 0.05),
-                            'vx': (dx / dist) * speed + random.uniform(-0.1, 0.1),
-                            'vy': (dy / dist) * speed + random.uniform(-0.1, 0.1),
-                            'life': 0.6 + random.random() * 0.4,
+                            'vx': dx / travel_time + random.uniform(-0.05, 0.05),
+                            'vy': dy / travel_time + random.uniform(-0.05, 0.05),
+                            'target_x': key_x,  # Store target for landing
+                            'life': travel_time + 0.3,  # Extra time for landing fade
                             'glow': voice.glow,
                             'freq': voice_freq,
                         })
