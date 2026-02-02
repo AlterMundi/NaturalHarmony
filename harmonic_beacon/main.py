@@ -328,15 +328,14 @@ class HarmonicBeacon:
             self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
     
     def _handle_aftertouch(self, value: int) -> None:
-        """Handle channel aftertouch based on current mode.
+        """Handle channel aftertouch - modulate to new root.
         
-        F1_CENTER mode (CC22 OFF):
-            Sets f₁ to the last played note's beacon frequency.
-            Anchor stays at C1 (config.ANCHOR_MIDI_NOTE).
-            
-        KEY_ANCHOR mode (CC22 ON):
-            Sets f₁ AND moves the anchor to the last played key.
-            That key becomes n=1 (the fundamental).
+        When aftertouch is triggered, the keyboard re-orients around the 
+        played note's pitch class. The new anchor is the same pitch class
+        as the played note, but in the current anchor's octave.
+        
+        The played note keeps its current frequency while the system
+        re-tunes around it.
         
         Args:
             value: Aftertouch pressure value (0-127)
@@ -353,27 +352,67 @@ class HarmonicBeacon:
         if pair is None:
             return
         
-        # The last played note's beacon frequency becomes the new f₁
-        new_f1 = pair.beacon_frequency
+        played_midi = pair.midi_note
+        played_freq = pair.beacon_frequency
+        played_n = pair.harmonic_n
+        current_anchor = self._key_mapper.anchor_midi
+        
+        # Calculate new anchor: same pitch class as played note, 
+        # but in the current anchor's octave
+        played_pitch_class = played_midi % 12
+        anchor_octave = current_anchor // 12
+        new_anchor = (anchor_octave * 12) + played_pitch_class
+        
+        # Calculate semitones from new anchor to played note
+        semitones_from_new_anchor = played_midi - new_anchor
+        
+        # Find the harmonic n at that semitone distance
+        # For octaves: 12 semitones = 1200 cents = n*2
+        # We need to find n where 1200*log2(n) ≈ semitones_from_new_anchor * 100
+        import math
+        target_cents = semitones_from_new_anchor * 100.0
+        
+        # Find closest harmonic to target_cents
+        best_n = 1
+        best_diff = float('inf')
+        for n in range(1, config.MAX_HARMONIC + 1):
+            h_cents = 1200.0 * math.log2(n)
+            diff = abs(h_cents - target_cents)
+            if diff < best_diff:
+                best_diff = diff
+                best_n = n
+            if h_cents > target_cents + 100:  # Stop if way past
+                break
+        
+        # Calculate new f1 so that played_note keeps its current frequency
+        # played_freq = new_f1 * best_n  ->  new_f1 = played_freq / best_n
+        new_f1 = played_freq / best_n
         
         # Transpose to allowed range (preserve pitch class)
         while new_f1 < self.f1.min_freq:
             new_f1 *= 2.0
+            new_anchor += 12  # Move anchor up an octave too
         while new_f1 > self.f1.max_freq:
             new_f1 /= 2.0
+            new_anchor -= 12  # Move anchor down an octave too
         
         # Set f₁ instantly (no sliding for aftertouch)
         self.f1.value = new_f1
         self.f1.target = new_f1
         
-        # In KEY_ANCHOR mode, also move the anchor to the pressed key
-        if self.aftertouch_mode == AftertouchMode.KEY_ANCHOR:
-            config.ANCHOR_MIDI_NOTE = pair.midi_note
-            if self.verbose:
-                print(f"⚓ Key Anchor: MIDI {pair.midi_note} is now n=1, f₁ = {new_f1:.1f} Hz")
-        else:
-            if self.verbose:
-                print(f"⚓ f₁ Center: f₁ = {new_f1:.1f} Hz (from MIDI {pair.midi_note})")
+        # Update the key mapper with new anchor and f1
+        self._key_mapper.rebuild(f1=new_f1, anchor_midi=new_anchor)
+        
+        # Update global config anchor for compatibility
+        config.ANCHOR_MIDI_NOTE = new_anchor
+        
+        note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+        anchor_note = note_names[new_anchor % 12]
+        anchor_octave_num = (new_anchor // 12) - 1
+        
+        if self.verbose:
+            print(f"⚓ Modulated: {anchor_note}{anchor_octave_num} is now n=1, f₁ = {new_f1:.1f} Hz")
+            print(f"    (from MIDI {played_midi}, was n={played_n}, freq kept at {played_freq:.1f} Hz)")
     
     def _handle_mode_toggle(self, cc_value: int) -> None:
         """Handle aftertouch mode toggle (CC22).

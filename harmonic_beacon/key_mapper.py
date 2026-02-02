@@ -179,11 +179,14 @@ class KeyMapper:
     def rebuild(
         self,
         f1: Optional[float] = None,
+        anchor_midi: Optional[int] = None,
         tolerance_cents: Optional[float] = None,
     ) -> None:
         """Rebuild the mapping with new parameters."""
         if f1 is not None:
             self.f1 = f1
+        if anchor_midi is not None:
+            self.anchor_midi = anchor_midi
         if tolerance_cents is not None:
             self.tolerance_cents = tolerance_cents
         self._build_mapping()
