@@ -77,6 +77,34 @@ void main() {
 }
 """
 
+# Shaders for 2D HUD overlay
+HUD_VERTEX_SHADER = """
+#version 330
+
+in vec2 in_position;
+in vec2 in_texcoord;
+
+out vec2 v_texcoord;
+
+void main() {
+    gl_Position = vec4(in_position, 0.0, 1.0);
+    v_texcoord = in_texcoord;
+}
+"""
+
+HUD_FRAGMENT_SHADER = """
+#version 330
+
+uniform sampler2D hud_texture;
+in vec2 v_texcoord;
+
+out vec4 fragColor;
+
+void main() {
+    fragColor = texture(hud_texture, v_texcoord);
+}
+"""
+
 
 def freq_to_x(freq: float, width: float = 3.5) -> float:
     """Convert frequency to X position using logarithmic scale."""
@@ -119,6 +147,10 @@ class Renderer3D:
         
         # Settings
         self.show_energy_lines = True  # On by default
+        self.show_hud = config.SHOW_HUD_DEFAULT
+        self.fullscreen = config.FULLSCREEN_DEFAULT
+        self.screen_width = config.WINDOW_WIDTH
+        self.screen_height = config.WINDOW_HEIGHT
         
         # Particles for energy lines
         self.particles: list[dict] = []
@@ -127,15 +159,33 @@ class Renderer3D:
         self.time = 0.0
         
         # Layout (Y positions)
-        self.keyboard_y = 1.2      # Keyboard at top
-        self.ruler_y = -0.8        # Frequency ruler below
-        self.ruler_width = 3.5
+        self.keyboard_y = 1.4       # Keyboard at top
+        self.ruler_y = -0.6         # Frequency ruler below
+        self.ruler_width = 3.8      # Wider to fit 88/128 keys
+        
+        # HUD texture and quad
+        self.hud_prog: Optional[moderngl.Program] = None
+        self.hud_texture: Optional[moderngl.Texture] = None
+        self.hud_vao: Optional[moderngl.VertexArray] = None
+        self.hud_surface: Optional[pygame.Surface] = None
+        self.hud_size = (300, 200)  # Size of HUD overlay on screen
         
     def start(self) -> None:
         pygame.init()
+        
+        # Get display info for fullscreen
+        display_info = pygame.display.Info()
+        
+        if self.fullscreen:
+            self.screen_width = display_info.current_w
+            self.screen_height = display_info.current_h
+            flags = OPENGL | DOUBLEBUF | pygame.FULLSCREEN
+        else:
+            flags = OPENGL | DOUBLEBUF
+        
         pygame.display.set_mode(
-            (config.WINDOW_WIDTH, config.WINDOW_HEIGHT),
-            OPENGL | DOUBLEBUF
+            (self.screen_width, self.screen_height),
+            flags
         )
         pygame.display.set_caption(config.WINDOW_TITLE + " (3D)")
         
@@ -146,7 +196,13 @@ class Renderer3D:
         self.ctx.enable(moderngl.PROGRAM_POINT_SIZE)
         self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
         
+        # Initialize pygame font for HUD
+        pygame.font.init()
+        self.font = pygame.font.SysFont('monospace', 16, bold=True)
+        self.hud_surface = pygame.Surface(self.hud_size, pygame.SRCALPHA)
+        
         self._create_shaders()
+        self._create_hud_resources()
         self.running = True
     
     def _create_shaders(self) -> None:
@@ -154,6 +210,37 @@ class Renderer3D:
             vertex_shader=VERTEX_SHADER,
             fragment_shader=FRAGMENT_SHADER,
         )
+        self.hud_prog = self.ctx.program(
+            vertex_shader=HUD_VERTEX_SHADER,
+            fragment_shader=HUD_FRAGMENT_SHADER,
+        )
+    
+    def _create_hud_resources(self) -> None:
+        """Create resources for HUD overlay."""
+        # Quad for HUD (top-left corner in screen space)
+        # ModernGL screen coords are -1 to 1
+        # We want it in the top left, roughly 300x200 pixels
+        w = (self.hud_size[0] / self.screen_width) * 2
+        h = (self.hud_size[1] / self.screen_height) * 2
+        
+        # Quad vertices: x, y, u, v
+        vertices = np.array([
+            -1.0,  1.0,     0.0, 0.0,  # Top Left
+            -1.0+w, 1.0,     1.0, 0.0,  # Top Right
+            -1.0,  1.0-h,   0.0, 1.0,  # Bottom Left
+            -1.0+w, 1.0-h,   1.0, 1.0,  # Bottom Right
+        ], dtype='f4')
+        
+        vbo = self.ctx.buffer(vertices.tobytes())
+        self.hud_vao = self.ctx.vertex_array(
+            self.hud_prog,
+            [(vbo, '2f 2f', 'in_position', 'in_texcoord')],
+            index_buffer=self.ctx.buffer(np.array([0, 1, 2, 1, 2, 3], dtype='i4').tobytes())
+        )
+        
+        # Texture for HUD
+        self.hud_texture = self.ctx.texture(self.hud_size, 4)
+        self.hud_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
     
     def stop(self) -> None:
         self.running = False
@@ -168,7 +255,30 @@ class Renderer3D:
                     return False
                 elif event.key == pygame.K_e:
                     self.show_energy_lines = not self.show_energy_lines
+                elif event.key == pygame.K_h:
+                    self.show_hud = not self.show_hud
+                elif event.key == pygame.K_f:
+                    self._toggle_fullscreen()
         return True
+    
+    def _toggle_fullscreen(self) -> None:
+        """Toggle between fullscreen and windowed mode."""
+        self.fullscreen = not self.fullscreen
+        
+        if self.fullscreen:
+            display_info = pygame.display.Info()
+            self.screen_width = display_info.current_w
+            self.screen_height = display_info.current_h
+            flags = OPENGL | DOUBLEBUF | pygame.FULLSCREEN
+        else:
+            self.screen_width = config.WINDOW_WIDTH
+            self.screen_height = config.WINDOW_HEIGHT
+            flags = OPENGL | DOUBLEBUF
+        
+        pygame.display.set_mode((self.screen_width, self.screen_height), flags)
+        self.ctx = moderngl.create_context()
+        self._create_shaders()
+        self._create_hud_resources()
     
     def render(self, dt: float) -> None:
         if not self.ctx:
@@ -182,8 +292,8 @@ class Renderer3D:
         self.ctx.screen.use()
         self.ctx.clear(0.02, 0.02, 0.05, 1.0)
         
-        # Orthographic projection
-        aspect = config.WINDOW_WIDTH / config.WINDOW_HEIGHT
+        # Orthographic projection using actual screen dimensions
+        aspect = self.screen_width / self.screen_height
         proj = create_ortho_matrix(-aspect * 2, aspect * 2, -2, 2, -10, 10)
         view = np.eye(4, dtype='f4')
         
@@ -198,7 +308,65 @@ class Renderer3D:
         if self.show_energy_lines:
             self._render_particles()
         
+        if self.show_hud:
+            self._render_hud()
+        
         pygame.display.flip()
+    
+    def _render_hud(self) -> None:
+        """Render the HUD overlay with numeric values."""
+        if not self.hud_surface or not self.hud_texture:
+            return
+            
+        # 1. Clear HUD surface (transparent)
+        self.hud_surface.fill((0, 0, 0, 0))
+        
+        # 2. Get active voice info
+        voices = self.state.get_all_visible_voices()
+        active_count = len([v for v in voices if v.glow > 0.5])
+        freqs = sorted(set(v.frequency for v in voices if v.glow > 0.5))
+        freq_str = ", ".join(f"{f:.0f}" for f in freqs[:4])
+        if len(freqs) > 4:
+            freq_str += ".."
+            
+        keys_pressed = len(self.state.pressed_keys)
+        
+        # 3. Build HUD lines
+        lines = [
+            f"f1: {self.state.f1:.1f} Hz",
+            f"Active: {active_count} v, {keys_pressed} k",
+            f"Freqs: {freq_str}" if freqs else "",
+            "",
+            "[F] Fullscreen [E] Energy [H] HUD",
+        ]
+        
+        # Draw background panel
+        pygame.draw.rect(self.hud_surface, (15, 15, 30, 200), (0, 0, 300, 160), border_radius=10)
+        pygame.draw.rect(self.hud_surface, (100, 150, 255, 100), (0, 0, 300, 160), 2, border_radius=10)
+        
+        # 4. Render each line
+        y_offset = 15
+        for line in lines:
+            if line:
+                text_surface = self.font.render(line, True, (200, 230, 255))
+                self.hud_surface.blit(text_surface, (20, y_offset))
+                y_offset += 25
+            else:
+                y_offset += 10
+        
+        # 5. Upload PyGame surface to ModernGL texture
+        texture_data = pygame.image.tostring(self.hud_surface, 'RGBA', True)
+        self.hud_texture.write(texture_data)
+        
+        # 6. Render HUD quad
+        self.hud_texture.use(0)
+        self.hud_vao.render(moderngl.TRIANGLE_STRIP)
+        
+        # Update window title as fallback/extra info
+        title_info = f"f1={self.state.f1:.1f}Hz"
+        if active_count > 0:
+            title_info += f" | {active_count} voices"
+        pygame.display.set_caption(f"Harmonic Visualizer | {title_info}")
     
     def _update_particles(self, dt: float) -> None:
         """Update particle positions and spawn new ones from active harmonics."""
@@ -240,7 +408,7 @@ class Renderer3D:
                 # Get the source key position
                 key_idx = voice.source_note - config.KEYBOARD_LOWEST_NOTE
                 if 0 <= key_idx < config.KEYBOARD_KEYS:
-                    key_x = (key_idx / config.KEYBOARD_KEYS) * 3.0 - 1.5
+                    key_x = (key_idx / config.KEYBOARD_KEYS) * self.ruler_width - self.ruler_width/2
                     
                     # Spawn particles flowing toward the key
                     if random.random() < 0.35 * voice.glow:
@@ -406,11 +574,11 @@ class Renderer3D:
         vertices = []
         
         key_count = config.KEYBOARD_KEYS
-        total_width = 3.0
+        total_width = self.ruler_width  # Match ruler width for 88 keys
         key_width = total_width / key_count
         keyboard_y = self.keyboard_y
-        white_height = 0.45
-        black_height = 0.3
+        white_height = 0.35
+        black_height = 0.22
         
         # Render white keys first
         for i in range(key_count):

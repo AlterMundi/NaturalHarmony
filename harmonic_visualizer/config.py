@@ -10,11 +10,14 @@ WINDOW_HEIGHT = 800
 WINDOW_TITLE = "Harmonic Visualizer"
 FPS = 60
 
-# Keyboard settings
-# KeyLab MKII 61: 61 keys, ±3 octaves transpose = full MIDI range accessible
-KEYBOARD_KEYS = 61
-KEYBOARD_LOWEST_NOTE = 36  # C2 (default, adjustable with transpose)
+# Keyboard settings - Full MIDI range (0 to 127)
+KEYBOARD_KEYS = 128
+KEYBOARD_LOWEST_NOTE = 0  # Full MIDI range
 KEYBOARD_TRANSPOSE_RANGE = 3  # ±3 octaves
+
+# Display settings
+FULLSCREEN_DEFAULT = True  # Start in fullscreen mode
+SHOW_HUD_DEFAULT = True    # Show numeric values overlay
 
 # Colors (RGB)
 COLOR_BACKGROUND = (15, 15, 25)

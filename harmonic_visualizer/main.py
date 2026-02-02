@@ -63,10 +63,8 @@ def main() -> None:
     # Start
     print(f"Harmonic Visualizer starting ({mode_str})...")
     print(f"  Listening on OSC port {args.port}")
-    print(f"  Press 'E' to toggle energy lines")
-    if args.use_3d:
-        print(f"  Arrow keys to orbit camera")
-    print(f"  Press ESC to quit")
+    print(f"  [E] Toggle particles  [H] Toggle HUD  [F] Toggle fullscreen")
+    print(f"  [ESC] Quit")
     
     try:
         receiver.start()
