@@ -2,3 +2,6 @@
 mido>=1.3.0
 python-rtmidi>=1.5.0
 pyliblo3>=0.16.0
+
+# Visualizer dependencies
+pygame>=2.5.0
