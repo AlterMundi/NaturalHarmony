@@ -7,7 +7,6 @@ import sys
 from . import config
 from .state import VisualizerState
 from .osc_receiver import OscReceiver
-from .renderer import Renderer
 
 
 def main() -> None:
@@ -26,6 +25,12 @@ def main() -> None:
         action="store_true",
         help="Disable energy lines (can toggle with 'E' key)",
     )
+    parser.add_argument(
+        "--3d",
+        dest="use_3d",
+        action="store_true",
+        help="Use 3D renderer with bloom effects",
+    )
     
     args = parser.parse_args()
     
@@ -34,7 +39,16 @@ def main() -> None:
     
     # Create components
     receiver = OscReceiver(state, port=args.port)
-    renderer = Renderer(state)
+    
+    # Choose renderer
+    if args.use_3d:
+        from .renderer_3d import Renderer3D
+        renderer = Renderer3D(state)
+        mode_str = "3D"
+    else:
+        from .renderer import Renderer
+        renderer = Renderer(state)
+        mode_str = "2D"
     
     if args.no_lines:
         renderer.show_energy_lines = False
@@ -47,9 +61,11 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Start
-    print(f"Harmonic Visualizer starting...")
+    print(f"Harmonic Visualizer starting ({mode_str})...")
     print(f"  Listening on OSC port {args.port}")
     print(f"  Press 'E' to toggle energy lines")
+    if args.use_3d:
+        print(f"  Arrow keys to orbit camera")
     print(f"  Press ESC to quit")
     
     try:

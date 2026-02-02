@@ -5,3 +5,5 @@ pyliblo3>=0.16.0
 
 # Visualizer dependencies
 pygame>=2.5.0
+moderngl>=5.8.0
+numpy>=1.24.0
