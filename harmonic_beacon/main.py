@@ -20,10 +20,10 @@ class AftertouchMode(Enum):
 from . import config
 from .harmonics import (
     beacon_frequency,
-    find_harmonics_with_fallback,
     playable_frequency,
     frequency_to_midi_float,
 )
+from .key_mapper import KeyMapper
 from .lfo import HarmonicLFO, VibratoMode
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
@@ -137,6 +137,14 @@ class HarmonicBeacon:
         self.voices = VoiceTracker()
         self.f1 = F1Modulator()
         
+        # Key mapper for harmonic matching
+        self._key_mapper = KeyMapper(
+            f1=self.f1.value,
+            anchor_midi=config.ANCHOR_MIDI_NOTE,
+            tolerance_cents=self.tolerance,
+            max_harmonic=config.MAX_HARMONIC,
+        )
+        
     def start(self) -> None:
         """Start the Harmonic Beacon."""
         # Open MIDI port
@@ -170,30 +178,24 @@ class HarmonicBeacon:
             
     def _handle_note_on(self, note: int, velocity: int) -> None:
         """Handle a Note-On event with tolerance-based harmonic mapping."""
-        # Find all harmonics within tolerance for this key
-        harmonics = find_harmonics_with_fallback(
-            note, 
-            config.ANCHOR_MIDI_NOTE, 
-            self.tolerance,
-            config.MAX_HARMONIC,
-        )
-        
-        # Use primary harmonic (lowest) for voice allocation
-        primary_n = harmonics[0]
         current_f1 = self.f1.value
         
-        # Calculate beacon frequencies for all matching harmonics
-        beacon_freqs = [beacon_frequency(current_f1, n) for n in harmonics]
+        # Use KeyMapper for clean symmetric tolerance matching
+        match = self._key_mapper.get_match(note)
         
-        # Primary frequencies for the voice pair
-        beacon_freq = beacon_freqs[0]
-        playable_freq = playable_frequency(
-            current_f1, primary_n, note
-        )
+        if match is None:
+            # No harmonic within tolerance - skip this note
+            if self.verbose:
+                print(f"♪ Note ON: MIDI {note} → (no harmonic match at {self.tolerance:.0f}¢)")
+            return
         
-        # Set up LFO for harmonic chorus if multiple matches
+        primary_n = match.harmonic_n
+        beacon_freq = current_f1 * primary_n  # f1 * n
+        playable_freq = playable_frequency(current_f1, primary_n, note)
+        
+        # Set up LFO (single harmonic, no chorus needed)
         lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
-        lfo.set_harmonics(beacon_freqs)
+        lfo.set_harmonics([beacon_freq])
         self._note_lfos[note] = lfo
         
         # Allocate voices
@@ -215,8 +217,8 @@ class HarmonicBeacon:
         self.osc.broadcast_voice_on(playable_id, playable_freq, vel_normalized, note, primary_n)
         
         if self.verbose:
-            harm_str = ",".join(str(n) for n in harmonics)
-            print(f"♪ Note ON: MIDI {note} → n=[{harm_str}] (tol: {self.tolerance:.0f}¢)")
+            sign = '+' if match.deviation_cents >= 0 else ''
+            print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
             print(f"    Beacon:   {beacon_freq:.2f} Hz")
             print(f"    Playable: {playable_freq:.2f} Hz")
             
@@ -357,6 +359,8 @@ class HarmonicBeacon:
             config.TOLERANCE_MIN + 
             normalized * (config.TOLERANCE_MAX - config.TOLERANCE_MIN)
         )
+        # Rebuild key mapper with new tolerance
+        self._key_mapper.rebuild(tolerance_cents=self.tolerance)
         if self.verbose:
             print(f"🎚️ Tolerance: {self.tolerance:.1f}¢")
         self.osc.broadcast_cc(config.TOLERANCE_CC, cc_value)
