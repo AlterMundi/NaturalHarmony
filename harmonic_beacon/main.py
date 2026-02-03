@@ -523,8 +523,9 @@ class HarmonicBeacon:
         # Update all active voices with new frequencies
         self._update_active_voices()
         
-        # Broadcast new f1 to visualizer
+        # Broadcast new f1 and anchor to visualizer
         self.osc.broadcast_f1(new_f1)
+        self.osc.broadcast_anchor(new_anchor)
         
         note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
         anchor_note = note_names[new_anchor % 12]
