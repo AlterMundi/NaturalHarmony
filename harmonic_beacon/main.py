@@ -214,6 +214,10 @@ class HarmonicBeacon:
         
         playable_freq = playable_frequency(current_f1, primary_n, note)
         
+        # Determine if playable voice is needed (different from beacon by more than 1Hz)
+        # If they're essentially the same frequency, we only need one voice
+        needs_playable_voice = abs(playable_freq - beacon_freq) > 1.0
+        
         # Set up LFO (single harmonic, no chorus needed)
         lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
         lfo.set_harmonics([beacon_freq])
@@ -228,18 +232,22 @@ class HarmonicBeacon:
             beacon_vel = velocity
             transposed_vel = 0
         
-        # Allocate voices
+        # Allocate voices (playable_freq will be same as beacon if not needed separately)
         beacon_id, playable_id = self.voices.note_on(
             note, velocity, 
             beacon_freq=beacon_freq, 
-            playable_freq=playable_freq,
+            playable_freq=playable_freq if needs_playable_voice else beacon_freq,
             original_f1=current_f1,
             harmonic_n=primary_n,
         )
         beacon_vel_normalized = beacon_vel / 127.0
         
+        # Always send beacon voice
         self.osc.send_note_on(beacon_id, beacon_freq, beacon_vel_normalized)
-        self.osc.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
+        
+        # Only send playable voice if it's a different frequency
+        if needs_playable_voice:
+            self.osc.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
         
         # Send transposed layer if enabled for borrowed keys
         if transposed_freq is not None and self.transpose_layer_enabled and transposed_vel > 0:
@@ -251,7 +259,8 @@ class HarmonicBeacon:
         # Broadcast to visualizer
         self.osc.broadcast_key_on(note, velocity)
         self.osc.broadcast_voice_on(beacon_id, beacon_freq, beacon_vel_normalized, note, primary_n)
-        self.osc.broadcast_voice_on(playable_id, playable_freq, beacon_vel_normalized, note, primary_n)
+        if needs_playable_voice:
+            self.osc.broadcast_voice_on(playable_id, playable_freq, beacon_vel_normalized, note, primary_n)
         
         if self.verbose:
             if match is not None:
@@ -273,20 +282,27 @@ class HarmonicBeacon:
         # Clean up LFO for this note
         self._note_lfos.pop(note, None)
         
+        # Check if playable voice was different from beacon (same logic as note_on)
+        playable_was_active = abs(pair.playable_frequency - pair.beacon_frequency) > 1.0
+        
         # Send note-off with frequencies (required by Surge XT)
         self.osc.send_note_off(
             pair.beacon_voice_id, 
             frequency=pair.beacon_frequency
         )
-        self.osc.send_note_off(
-            pair.playable_voice_id,
-            frequency=pair.playable_frequency
-        )
+        
+        # Only send playable note-off if it was actually playing
+        if playable_was_active:
+            self.osc.send_note_off(
+                pair.playable_voice_id,
+                frequency=pair.playable_frequency
+            )
         
         # Broadcast to visualizer
         self.osc.broadcast_key_off(note)
         self.osc.broadcast_voice_off(pair.beacon_voice_id)
-        self.osc.broadcast_voice_off(pair.playable_voice_id)
+        if playable_was_active:
+            self.osc.broadcast_voice_off(pair.playable_voice_id)
         
         if self.verbose:
             print(f"♫ Note OFF: MIDI {note}")
@@ -308,24 +324,29 @@ class HarmonicBeacon:
         current_f1 = self.f1.value
         
         for note, pair in self.voices.get_active_notes().items():
+            # Check if playable voice was active (same logic as note_on/off)
+            playable_is_active = abs(pair.playable_frequency - pair.beacon_frequency) > 1.0
+            
             # Calculate new frequencies based on current f₁
             new_beacon_freq = beacon_frequency(current_f1, pair.harmonic_n)
-            new_playable_freq = playable_frequency(
-                current_f1, pair.harmonic_n, note
-            )
             
-            # Calculate semitone offsets from original frequencies
+            # Calculate semitone offset from original beacon frequency
             original_beacon_midi = frequency_to_midi_float(pair.beacon_frequency)
             new_beacon_midi = frequency_to_midi_float(new_beacon_freq)
             beacon_semitone_offset = new_beacon_midi - original_beacon_midi
             
-            original_playable_midi = frequency_to_midi_float(pair.playable_frequency)
-            new_playable_midi = frequency_to_midi_float(new_playable_freq)
-            playable_semitone_offset = new_playable_midi - original_playable_midi
-            
-            # Send pitch expressions to Surge XT
+            # Send pitch expression for beacon voice
             self.osc.send_pitch_expression(pair.beacon_voice_id, beacon_semitone_offset)
-            self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
+            
+            # Only send playable pitch expression if it was actually playing
+            if playable_is_active:
+                new_playable_freq = playable_frequency(
+                    current_f1, pair.harmonic_n, note
+                )
+                original_playable_midi = frequency_to_midi_float(pair.playable_frequency)
+                new_playable_midi = frequency_to_midi_float(new_playable_freq)
+                playable_semitone_offset = new_playable_midi - original_playable_midi
+                self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
     
     def _handle_aftertouch(self, value: int) -> None:
         """Handle channel aftertouch - modulate to new root.
