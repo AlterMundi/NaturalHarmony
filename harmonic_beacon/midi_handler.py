@@ -130,14 +130,6 @@ class MidiHandler:
         """Check if a message is the f₁ modulation CC."""
         return msg.type == "control_change" and msg.control == self.f1_cc
     
-    def is_aftertouch(self, msg: mido.Message) -> bool:
-        """Check if a message is channel aftertouch."""
-        return msg.type == "aftertouch"
-    
-    def is_mode_toggle(self, msg: mido.Message) -> bool:
-        """Check if a message is the aftertouch mode toggle CC (CC22)."""
-        return msg.type == "control_change" and msg.control == config.AFTERTOUCH_MODE_CC
-    
     def is_tolerance_control(self, msg: mido.Message) -> bool:
         """Check if a message is the tolerance CC (CC67)."""
         return msg.type == "control_change" and msg.control == config.TOLERANCE_CC
@@ -149,14 +141,6 @@ class MidiHandler:
     def is_vibrato_mode_toggle(self, msg: mido.Message) -> bool:
         """Check if a message is the vibrato mode toggle CC (CC23)."""
         return msg.type == "control_change" and msg.control == config.VIBRATO_MODE_CC
-    
-    def is_aftertouch_enable_toggle(self, msg: mido.Message) -> bool:
-        """Check if a message is the aftertouch enable toggle CC (CC30)."""
-        return msg.type == "control_change" and msg.control == config.AFTERTOUCH_ENABLE_CC
-    
-    def is_aftertouch_threshold_control(self, msg: mido.Message) -> bool:
-        """Check if a message is the aftertouch threshold CC (CC92)."""
-        return msg.type == "control_change" and msg.control == config.AFTERTOUCH_THRESHOLD_CC
     
     def is_transpose_layer_toggle(self, msg: mido.Message) -> bool:
         """Check if a message is the transpose layer toggle CC (CC29)."""

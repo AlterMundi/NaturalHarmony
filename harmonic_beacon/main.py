@@ -5,17 +5,11 @@ in a real-time event loop.
 """
 
 import argparse
-from enum import Enum
+import math
 import signal
 import sys
 import time
 from typing import Optional
-
-
-class AftertouchMode(Enum):
-    """Aftertouch behavior modes."""
-    F1_CENTER = 0   # CC22 OFF: Aftertouch sets f₁, anchor stays at C1
-    KEY_ANCHOR = 1  # CC22 ON: Aftertouch sets f₁ AND moves anchor to pressed key
 
 from . import config
 from .harmonics import (
@@ -107,6 +101,7 @@ class HarmonicBeacon:
         broadcast: bool = False,
         enable_mpe: bool = False,
         mock_mpe: bool = False,
+        modulation_port_pattern: Optional[str] = config.SECONDARY_MIDI_PORT_PATTERN,
         verbose: bool = True,
     ):
         """Initialize The Harmonic Beacon.
@@ -116,22 +111,16 @@ class HarmonicBeacon:
             broadcast: If True, broadcast state to visualizer
             enable_mpe: If True, enable MPE output via virtual MIDI port
             mock_mpe: If True, use MockMpeSender for testing
+            modulation_port_pattern: Pattern to match secondary MIDI controller name
             verbose: If True, print status messages
         """
         self.verbose = verbose
         self.running = False
         
-        # Aftertouch mode (toggled by CC22)
-        self.aftertouch_mode = AftertouchMode.F1_CENTER
-        
         # Tolerance and LFO settings
         self.tolerance = config.DEFAULT_TOLERANCE
         self.lfo_rate = config.DEFAULT_LFO_RATE
         self.vibrato_mode = VibratoMode.SMOOTH
-        
-        # Aftertouch settings
-        self.aftertouch_enabled = True  # Can be toggled off with CC30
-        self.aftertouch_threshold = config.DEFAULT_AFTERTOUCH_THRESHOLD
         
         # Transpose layer settings (for borrowed keys)
         self.transpose_layer_enabled = True  # Toggled by CC29
@@ -143,6 +132,12 @@ class HarmonicBeacon:
         
         # Initialize components
         self.midi = MidiHandler()
+        
+        # Secondary MIDI controller for modulation (optional)
+        self.modulation_port_pattern = modulation_port_pattern
+        self.secondary_midi: Optional[MidiHandler] = None
+        if modulation_port_pattern:
+            self.secondary_midi = MidiHandler(port_pattern=modulation_port_pattern)
         self.osc: OscSender = MockOscSender(verbose=verbose) if mock_osc else OscSender(broadcast=broadcast)
         self.voices = VoiceTracker()
         self.f1 = F1Modulator()
@@ -167,10 +162,21 @@ class HarmonicBeacon:
         
     def start(self) -> None:
         """Start the Harmonic Beacon."""
-        # Open MIDI port
+        # Open primary MIDI port
         port_name = self.midi.open()
         if self.verbose:
             print(f"✓ MIDI: Connected to '{port_name}'")
+        
+        # Open secondary MIDI port for modulation (non-fatal if unavailable)
+        if self.secondary_midi is not None:
+            try:
+                secondary_port = self.secondary_midi.open()
+                if self.verbose:
+                    print(f"✓ MIDI (modulation): Connected to '{secondary_port}'")
+            except RuntimeError as e:
+                if self.verbose:
+                    print(f"⚠ MIDI (modulation): No controller found matching '{self.modulation_port_pattern}'")
+                self.secondary_midi = None
             
         # Open OSC connection
         self.osc.open()
@@ -201,6 +207,8 @@ class HarmonicBeacon:
             
         # Close connections
         self.midi.close()
+        if self.secondary_midi is not None:
+            self.secondary_midi.close()
         self.osc.close()
         if self.mpe_enabled and self.mpe is not None:
             self.mpe.close()
@@ -447,49 +455,31 @@ class HarmonicBeacon:
                     transposed_semitone_offset = new_transposed_midi - original_transposed_midi
                     self.mpe.send_pitch_expression(pair.transposed_voice_id, transposed_semitone_offset)
     
-    def _handle_aftertouch(self, value: int) -> None:
-        """Handle channel aftertouch - modulate to new root.
+    def _handle_modulation_note(self, note: int) -> None:
+        """Handle note from secondary controller - modulate to new root.
         
-        When aftertouch is triggered, the keyboard re-orients around the 
-        played note's pitch class. The new anchor is the same pitch class
-        as the played note, but in the current anchor's octave.
+        When a note is played on the secondary (modulation) controller,
+        the keyboard re-orients around that note's pitch class. The new 
+        anchor is the same pitch class as the played note, but in the 
+        current anchor's octave.
         
-        The played note keeps its current frequency while the system
-        re-tunes around it.
+        This does NOT produce any sound - it only changes f₁ and anchor.
         
         Args:
-            value: Aftertouch pressure value (0-127)
+            note: MIDI note number from secondary controller
         """
-        # Check if aftertouch is enabled
-        if not self.aftertouch_enabled:
-            return
-        
-        # Only trigger when pressure exceeds threshold
-        if value < self.aftertouch_threshold:
-            return
-        
-        pair = self.voices.get_last_played_pair()
-        if pair is None:
-            return
-        
-        played_midi = pair.midi_note
-        played_freq = pair.beacon_frequency
-        played_n = pair.harmonic_n
         current_anchor = self._key_mapper.anchor_midi
         
         # Calculate new anchor: same pitch class as played note, 
         # but in the current anchor's octave
-        played_pitch_class = played_midi % 12
+        played_pitch_class = note % 12
         anchor_octave = current_anchor // 12
         new_anchor = (anchor_octave * 12) + played_pitch_class
         
         # Calculate semitones from new anchor to played note
-        semitones_from_new_anchor = played_midi - new_anchor
+        semitones_from_new_anchor = note - new_anchor
         
         # Find the harmonic n at that semitone distance
-        # For octaves: 12 semitones = 1200 cents = n*2
-        # We need to find n where 1200*log2(n) ≈ semitones_from_new_anchor * 100
-        import math
         target_cents = semitones_from_new_anchor * 100.0
         
         # Find closest harmonic to target_cents
@@ -504,8 +494,12 @@ class HarmonicBeacon:
             if h_cents > target_cents + 100:  # Stop if way past
                 break
         
-        # Calculate new f1 so that played_note keeps its current frequency
-        # played_freq = new_f1 * best_n  ->  new_f1 = played_freq / best_n
+        # Calculate new f1 so the played note becomes n=best_n at 12TET frequency
+        # For the played MIDI note, calculate its 12TET frequency
+        from .harmonics import FREQ_A4, MIDI_A4
+        played_freq = FREQ_A4 * (2.0 ** ((note - MIDI_A4) / 12.0))
+        
+        # new_f1 = played_freq / best_n
         new_f1 = played_freq / best_n
         
         # Transpose to allowed range (preserve pitch class)
@@ -516,7 +510,7 @@ class HarmonicBeacon:
             new_f1 /= 2.0
             new_anchor -= 12  # Move anchor down an octave too
         
-        # Set f₁ instantly (no sliding for aftertouch)
+        # Set f₁ instantly (no sliding)
         self.f1.value = new_f1
         self.f1.target = new_f1
         
@@ -532,21 +526,7 @@ class HarmonicBeacon:
         
         if self.verbose:
             print(f"⚓ Modulated: {anchor_note}{anchor_octave_num} is now n=1, f₁ = {new_f1:.1f} Hz")
-            print(f"    (from MIDI {played_midi}, was n={played_n}, freq kept at {played_freq:.1f} Hz)")
-    
-    def _handle_mode_toggle(self, cc_value: int) -> None:
-        """Handle aftertouch mode toggle (CC22).
-        
-        Args:
-            cc_value: CC value (0=OFF, 127=ON for toggle buttons)
-        """
-        new_mode = AftertouchMode.KEY_ANCHOR if cc_value >= 64 else AftertouchMode.F1_CENTER
-        
-        if new_mode != self.aftertouch_mode:
-            self.aftertouch_mode = new_mode
-            if self.verbose:
-                mode_name = "Key Anchor 🎯" if new_mode == AftertouchMode.KEY_ANCHOR else "f₁ Center 📍"
-                print(f"🔄 Mode: {mode_name}")
+            print(f"    (from MIDI {note}, n={best_n})")
     
     def _handle_tolerance_change(self, cc_value: int) -> None:
         """Handle tolerance CC (CC67).
@@ -601,29 +581,6 @@ class HarmonicBeacon:
                 mode_name = "Stepped ▮▮" if new_mode == VibratoMode.STEPPED else "Smooth 〜"
                 print(f"🔄 Vibrato: {mode_name}")
             self.osc.broadcast_cc(config.VIBRATO_MODE_CC, cc_value)
-    
-    def _handle_aftertouch_enable_toggle(self, cc_value: int) -> None:
-        """Handle aftertouch enable toggle (CC30).
-        
-        Args:
-            cc_value: CC value (0=disabled, 127=enabled)
-        """
-        enabled = cc_value >= 64
-        if enabled != self.aftertouch_enabled:
-            self.aftertouch_enabled = enabled
-            if self.verbose:
-                state = "ON ✓" if enabled else "OFF ✗"
-                print(f"👆 Aftertouch: {state}")
-    
-    def _handle_aftertouch_threshold_change(self, cc_value: int) -> None:
-        """Handle aftertouch threshold CC (CC92).
-        
-        Args:
-            cc_value: CC value (0-127) used directly as threshold
-        """
-        self.aftertouch_threshold = cc_value
-        if self.verbose:
-            print(f"🎚️ Aftertouch threshold: {cc_value}")
     
     def _handle_transpose_layer_toggle(self, cc_value: int) -> None:
         """Handle transpose layer toggle (CC29).
@@ -711,12 +668,6 @@ class HarmonicBeacon:
                     elif self.midi.is_f1_control(msg):
                         self._handle_f1_change(msg.value)
                     
-                    elif self.midi.is_aftertouch(msg):
-                        self._handle_aftertouch(msg.value)
-                    
-                    elif self.midi.is_mode_toggle(msg):
-                        self._handle_mode_toggle(msg.value)
-                    
                     elif self.midi.is_tolerance_control(msg):
                         self._handle_tolerance_change(msg.value)
                     
@@ -726,17 +677,19 @@ class HarmonicBeacon:
                     elif self.midi.is_vibrato_mode_toggle(msg):
                         self._handle_vibrato_mode_toggle(msg.value)
                     
-                    elif self.midi.is_aftertouch_enable_toggle(msg):
-                        self._handle_aftertouch_enable_toggle(msg.value)
-                    
-                    elif self.midi.is_aftertouch_threshold_control(msg):
-                        self._handle_aftertouch_threshold_change(msg.value)
-                    
                     elif self.midi.is_transpose_layer_toggle(msg):
                         self._handle_transpose_layer_toggle(msg.value)
                     
                     elif self.midi.is_transpose_mix_control(msg):
                         self._handle_transpose_mix_change(msg.value)
+                
+                # Poll secondary controller for modulation notes
+                if self.secondary_midi is not None:
+                    for msg in self.secondary_midi.poll():
+                        if self.secondary_midi.is_note_on(msg):
+                            # Modulation note - change anchor without producing sound
+                            self._handle_modulation_note(msg.note)
+                        # Note-off from secondary controller is ignored
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(config.MIDI_POLL_INTERVAL)
@@ -788,6 +741,18 @@ def main() -> None:
         action="store_true",
         help="Use mock MPE sender (for testing without virtual MIDI port)",
     )
+    parser.add_argument(
+        "--modulation-port",
+        type=str,
+        default=config.SECONDARY_MIDI_PORT_PATTERN,
+        metavar="PATTERN",
+        help=f"Pattern to match secondary MIDI controller for modulation (default: '{config.SECONDARY_MIDI_PORT_PATTERN}')",
+    )
+    parser.add_argument(
+        "--no-modulation",
+        action="store_true",
+        help="Disable secondary MIDI controller for modulation",
+    )
     
     args = parser.parse_args()
     
@@ -801,12 +766,16 @@ def main() -> None:
             print("  (none)")
         return
     
+    # Determine modulation port
+    modulation_port = None if args.no_modulation else args.modulation_port
+    
     # Create and run the beacon
     beacon = HarmonicBeacon(
         mock_osc=args.mock,
         broadcast=args.broadcast,
         enable_mpe=args.mpe or args.mock_mpe,
         mock_mpe=args.mock_mpe,
+        modulation_port_pattern=modulation_port,
         verbose=not args.quiet,
     )
     beacon.f1.value = args.f1

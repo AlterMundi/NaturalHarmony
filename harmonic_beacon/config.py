@@ -37,12 +37,12 @@ HIGHEST_MIDI_NOTE = 108 # C8
 # Set to None to use the first available port
 MIDI_PORT_PATTERN = "KeyLab"
 
+# Secondary controller for modulation (e.g., Minilab3)
+# Notes on this controller trigger modulation without producing sound
+SECONDARY_MIDI_PORT_PATTERN = "Minilab"
+
 # CC number for f₁ modulation (mod wheel = 1, common slider = 74)
 F1_CC_NUMBER = 1
-
-# CC number for aftertouch mode toggle (KeyLab toggle button 1 = CC22)
-# OFF = f₁ Center mode, ON = Key Anchor mode
-AFTERTOUCH_MODE_CC = 22
 
 # CC number for tolerance slider (KeyLab slider 1 = CC67)
 # Maps 1-127 to TOLERANCE_MIN-TOLERANCE_MAX cents
@@ -61,15 +61,6 @@ DEFAULT_LFO_RATE = 1.0  # Hz
 # CC number for vibrato mode toggle (KeyLab toggle button 2 = CC23)
 # OFF = Smooth interpolation, ON = Stepped (discrete jumps)
 VIBRATO_MODE_CC = 23
-
-# CC number for aftertouch enable toggle (CC30)
-# OFF = Aftertouch disabled, ON = Aftertouch enabled
-AFTERTOUCH_ENABLE_CC = 30
-
-# CC number for aftertouch pressure threshold slider (CC92)
-# Maps 0-127 to 0-127 pressure threshold
-AFTERTOUCH_THRESHOLD_CC = 92
-DEFAULT_AFTERTOUCH_THRESHOLD = 64
 
 # CC number for transpose layer toggle (CC29)
 # OFF = Only borrowed harmonic, ON = Also play octave-transposed version
