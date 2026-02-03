@@ -28,6 +28,7 @@ from .octave_borrower import OctaveBorrower
 from .lfo import HarmonicLFO, VibratoMode
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
+from .mpe_sender import MpeSender, MockMpeSender
 from .polyphony import VoiceTracker
 
 
@@ -104,6 +105,8 @@ class HarmonicBeacon:
         self,
         mock_osc: bool = False,
         broadcast: bool = False,
+        enable_mpe: bool = False,
+        mock_mpe: bool = False,
         verbose: bool = True,
     ):
         """Initialize The Harmonic Beacon.
@@ -111,6 +114,8 @@ class HarmonicBeacon:
         Args:
             mock_osc: If True, use MockOscSender instead of real OSC
             broadcast: If True, broadcast state to visualizer
+            enable_mpe: If True, enable MPE output via virtual MIDI port
+            mock_mpe: If True, use MockMpeSender for testing
             verbose: If True, print status messages
         """
         self.verbose = verbose
@@ -142,6 +147,13 @@ class HarmonicBeacon:
         self.voices = VoiceTracker()
         self.f1 = F1Modulator()
         
+        # MPE output (optional)
+        self.mpe_enabled = enable_mpe
+        if enable_mpe:
+            self.mpe: MpeSender = MockMpeSender(verbose=verbose) if mock_mpe else MpeSender(verbose=verbose)
+        else:
+            self.mpe = None
+        
         # Key mapper for harmonic matching
         self._key_mapper = KeyMapper(
             f1=self.f1.value,
@@ -164,6 +176,14 @@ class HarmonicBeacon:
         self.osc.open()
         if self.verbose:
             print(f"✓ OSC: Targeting {self.osc.host}:{self.osc.port}")
+        
+        # Open MPE output if enabled
+        if self.mpe_enabled and self.mpe is not None:
+            mpe_port = self.mpe.open()
+            if self.verbose:
+                print(f"✓ MPE: Virtual port '{mpe_port}' ready")
+        
+        if self.verbose:
             print(f"✓ f₁: {self.f1.value:.1f} Hz (range: {self.f1.min_freq}-{self.f1.max_freq} Hz)")
             print("\n🎵 The Harmonic Beacon is active! Press Ctrl+C to stop.\n")
         
@@ -175,11 +195,15 @@ class HarmonicBeacon:
         
         # Release all active voices
         self.osc.send_all_notes_off()
+        if self.mpe_enabled and self.mpe is not None:
+            self.mpe.send_all_notes_off()
         self.voices.clear()
             
         # Close connections
         self.midi.close()
         self.osc.close()
+        if self.mpe_enabled and self.mpe is not None:
+            self.mpe.close()
         
         if self.verbose:
             print("\n✓ The Harmonic Beacon has stopped.")
@@ -242,6 +266,20 @@ class HarmonicBeacon:
         )
         beacon_vel_normalized = beacon_vel / 127.0
         
+        # Calculate transposed layer info (for borrowed keys with CC29/CC90)
+        transposed_id = -1
+        transposed_vel_normalized = 0.0
+        if transposed_freq is not None and self.transpose_layer_enabled and transposed_vel > 0:
+            transposed_vel_normalized = transposed_vel / 127.0
+            # Use playable_id + 1000 as a separate voice ID for transposed layer
+            transposed_id = playable_id + 1000
+            # Store in voice pair for note_off
+            pair = self.voices.get_voice_pair(note)
+            if pair is not None:
+                pair.transposed_voice_id = transposed_id
+                pair.transposed_frequency = transposed_freq
+        
+        # === Send to OSC ===
         # Always send beacon voice
         self.osc.send_note_on(beacon_id, beacon_freq, beacon_vel_normalized)
         
@@ -250,10 +288,7 @@ class HarmonicBeacon:
             self.osc.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
         
         # Send transposed layer if enabled for borrowed keys
-        if transposed_freq is not None and self.transpose_layer_enabled and transposed_vel > 0:
-            transposed_vel_normalized = transposed_vel / 127.0
-            # Use playable_id + 1000 as a separate voice ID for transposed layer
-            transposed_id = playable_id + 1000
+        if transposed_id >= 0:
             self.osc.send_note_on(transposed_id, transposed_freq, transposed_vel_normalized)
         
         # Broadcast to visualizer
@@ -261,6 +296,19 @@ class HarmonicBeacon:
         self.osc.broadcast_voice_on(beacon_id, beacon_freq, beacon_vel_normalized, note, primary_n)
         if needs_playable_voice:
             self.osc.broadcast_voice_on(playable_id, playable_freq, beacon_vel_normalized, note, primary_n)
+        
+        # === Send to MPE (same voices as OSC) ===
+        if self.mpe_enabled and self.mpe is not None:
+            # Beacon voice
+            self.mpe.send_note_on(beacon_id, beacon_freq, beacon_vel_normalized)
+            
+            # Playable voice (if different)
+            if needs_playable_voice:
+                self.mpe.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
+            
+            # Transposed layer
+            if transposed_id >= 0:
+                self.mpe.send_note_on(transposed_id, transposed_freq, transposed_vel_normalized)
         
         if self.verbose:
             if match is not None:
@@ -285,17 +333,28 @@ class HarmonicBeacon:
         # Check if playable voice was different from beacon (same logic as note_on)
         playable_was_active = abs(pair.playable_frequency - pair.beacon_frequency) > 1.0
         
-        # Send note-off with frequencies (required by Surge XT)
+        # Check if transposed layer was active
+        transposed_was_active = pair.transposed_voice_id >= 0
+        
+        # === Send to OSC ===
+        # Beacon voice
         self.osc.send_note_off(
             pair.beacon_voice_id, 
             frequency=pair.beacon_frequency
         )
         
-        # Only send playable note-off if it was actually playing
+        # Playable voice (if it was active)
         if playable_was_active:
             self.osc.send_note_off(
                 pair.playable_voice_id,
                 frequency=pair.playable_frequency
+            )
+        
+        # Transposed layer (if it was active)
+        if transposed_was_active:
+            self.osc.send_note_off(
+                pair.transposed_voice_id,
+                frequency=pair.transposed_frequency
             )
         
         # Broadcast to visualizer
@@ -303,6 +362,19 @@ class HarmonicBeacon:
         self.osc.broadcast_voice_off(pair.beacon_voice_id)
         if playable_was_active:
             self.osc.broadcast_voice_off(pair.playable_voice_id)
+        
+        # === Send to MPE (same voices as OSC) ===
+        if self.mpe_enabled and self.mpe is not None:
+            # Beacon voice
+            self.mpe.send_note_off(pair.beacon_voice_id, frequency=pair.beacon_frequency)
+            
+            # Playable voice (if it was active)
+            if playable_was_active:
+                self.mpe.send_note_off(pair.playable_voice_id, frequency=pair.playable_frequency)
+            
+            # Transposed layer (if it was active)
+            if transposed_was_active:
+                self.mpe.send_note_off(pair.transposed_voice_id, frequency=pair.transposed_frequency)
         
         if self.verbose:
             print(f"♫ Note OFF: MIDI {note}")
@@ -327,6 +399,9 @@ class HarmonicBeacon:
             # Check if playable voice was active (same logic as note_on/off)
             playable_is_active = abs(pair.playable_frequency - pair.beacon_frequency) > 1.0
             
+            # Check if transposed layer was active
+            transposed_is_active = pair.transposed_voice_id >= 0
+            
             # Calculate new frequencies based on current f₁
             new_beacon_freq = beacon_frequency(current_f1, pair.harmonic_n)
             
@@ -335,10 +410,11 @@ class HarmonicBeacon:
             new_beacon_midi = frequency_to_midi_float(new_beacon_freq)
             beacon_semitone_offset = new_beacon_midi - original_beacon_midi
             
-            # Send pitch expression for beacon voice
+            # === Send to OSC ===
             self.osc.send_pitch_expression(pair.beacon_voice_id, beacon_semitone_offset)
             
-            # Only send playable pitch expression if it was actually playing
+            # Playable pitch expression
+            playable_semitone_offset = 0.0
             if playable_is_active:
                 new_playable_freq = playable_frequency(
                     current_f1, pair.harmonic_n, note
@@ -347,6 +423,29 @@ class HarmonicBeacon:
                 new_playable_midi = frequency_to_midi_float(new_playable_freq)
                 playable_semitone_offset = new_playable_midi - original_playable_midi
                 self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
+            
+            # Transposed pitch expression (same ratio as beacon)
+            if transposed_is_active and pair.transposed_frequency > 0:
+                # Transposed frequency scales proportionally with beacon
+                new_transposed_freq = pair.transposed_frequency * (new_beacon_freq / pair.beacon_frequency)
+                original_transposed_midi = frequency_to_midi_float(pair.transposed_frequency)
+                new_transposed_midi = frequency_to_midi_float(new_transposed_freq)
+                transposed_semitone_offset = new_transposed_midi - original_transposed_midi
+                self.osc.send_pitch_expression(pair.transposed_voice_id, transposed_semitone_offset)
+            
+            # === Send to MPE (same as OSC) ===
+            if self.mpe_enabled and self.mpe is not None:
+                self.mpe.send_pitch_expression(pair.beacon_voice_id, beacon_semitone_offset)
+                
+                if playable_is_active:
+                    self.mpe.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
+                
+                if transposed_is_active and pair.transposed_frequency > 0:
+                    new_transposed_freq = pair.transposed_frequency * (new_beacon_freq / pair.beacon_frequency)
+                    original_transposed_midi = frequency_to_midi_float(pair.transposed_frequency)
+                    new_transposed_midi = frequency_to_midi_float(new_transposed_freq)
+                    transposed_semitone_offset = new_transposed_midi - original_transposed_midi
+                    self.mpe.send_pitch_expression(pair.transposed_voice_id, transposed_semitone_offset)
     
     def _handle_aftertouch(self, value: int) -> None:
         """Handle channel aftertouch - modulate to new root.
@@ -679,6 +778,16 @@ def main() -> None:
         action="store_true",
         help=f"Broadcast state to visualizer on port {config.BROADCAST_PORT}",
     )
+    parser.add_argument(
+        "--mpe",
+        action="store_true",
+        help="Enable MPE output on virtual MIDI port 'Harmonic Beacon MPE'",
+    )
+    parser.add_argument(
+        "--mock-mpe",
+        action="store_true",
+        help="Use mock MPE sender (for testing without virtual MIDI port)",
+    )
     
     args = parser.parse_args()
     
@@ -696,6 +805,8 @@ def main() -> None:
     beacon = HarmonicBeacon(
         mock_osc=args.mock,
         broadcast=args.broadcast,
+        enable_mpe=args.mpe or args.mock_mpe,
+        mock_mpe=args.mock_mpe,
         verbose=not args.quiet,
     )
     beacon.f1.value = args.f1

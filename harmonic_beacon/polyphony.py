@@ -12,7 +12,7 @@ from . import config
 
 @dataclass
 class VoicePair:
-    """Represents the two voices triggered by a single MIDI note."""
+    """Represents the voices triggered by a single MIDI note."""
     midi_note: int
     velocity: int
     beacon_voice_id: int
@@ -23,6 +23,9 @@ class VoicePair:
     # Store original f₁ and harmonic for real-time pitch modulation
     original_f1: float = 54.0
     harmonic_n: int = 1
+    # Transposed layer (for borrowed keys with CC29/CC90)
+    transposed_voice_id: int = -1  # -1 means not active
+    transposed_frequency: float = 0.0
     
     
 class VoiceTracker:
