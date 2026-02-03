@@ -81,7 +81,7 @@ class KeyMapper:
     Uses symmetric tolerance matching: a key matches a harmonic if
     |key_cents - harmonic_cents| <= tolerance_cents.
     
-    When multiple harmonics are within tolerance, the closest one wins.
+    Stores ALL harmonics that match a key within tolerance.
     """
     
     def __init__(
@@ -110,58 +110,67 @@ class KeyMapper:
         self.lowest_midi = lowest_midi
         self.highest_midi = highest_midi
         
-        # Build the mapping table: midi_note -> (harmonic_n, deviation) or None
-        self._mapping: dict[int, tuple[int, float] | None] = {}
+        # Build the mapping table: midi_note -> list of (harmonic_n, deviation) or None
+        self._mapping: dict[int, list[tuple[int, float]] | None] = {}
         self._build_mapping()
     
     def _build_mapping(self) -> None:
         """Build the MIDI-to-harmonic lookup table.
         
-        For each MIDI key, find the closest harmonic within tolerance.
+        For each MIDI key, find ALL harmonics within tolerance.
+        Matches are stored sorted by harmonic number (n).
+        Skips harmonics exceeding 20kHz.
         """
+        # Maximum frequency for harmonics (hearing limit)
+        MAX_FREQ_HZ = 20000.0
+        
         for midi in range(self.lowest_midi, self.highest_midi + 1):
             key_cents = (midi - self.anchor_midi) * 100.0
             
-            best_n: int | None = None
-            best_deviation: float = float('inf')
+            matches: list[tuple[int, float]] = []
             
-            # Search through harmonics to find the closest match
+            # Search through harmonics to find matches
             for n in range(1, self.max_harmonic + 1):
+                # Skip harmonics that would exceed 20kHz
+                if self.f1 * n > MAX_FREQ_HZ:
+                    break
+                
                 h_cents = harmonic_to_cents(n)
                 deviation = key_cents - h_cents  # Can be positive or negative
                 abs_deviation = abs(deviation)
                 
-                # Check if within tolerance and closer than current best
+                # Collect matches within tolerance
                 if abs_deviation <= self.tolerance_cents:
-                    if abs_deviation < abs(best_deviation):
-                        best_n = n
-                        best_deviation = deviation
+                    matches.append((n, deviation))
                 
                 # Optimization: if harmonic is way past the key, stop searching
-                if h_cents > key_cents + self.tolerance_cents:
+                # (Assuming tolerance_cents << 100, checking slightly beyond ensures we don't miss edge cases)
+                if h_cents > key_cents + self.tolerance_cents + 1.0:
                     break
             
-            if best_n is not None:
-                self._mapping[midi] = (best_n, best_deviation)
+            if matches:
+                self._mapping[midi] = matches
             else:
                 self._mapping[midi] = None
     
     def get_harmonic(self, midi_note: int) -> Optional[int]:
-        """Get the harmonic number for a MIDI key.
+        """Get the harmonic number for a MIDI key (lowest match).
         
         Returns:
             Harmonic number if key matches, None otherwise
         """
-        result = self._mapping.get(midi_note)
-        return result[0] if result else None
+        matches = self._mapping.get(midi_note)
+        if not matches:
+            return None
+        return matches[0][0]  # Return n of the first/lowest match
     
     def get_match(self, midi_note: int) -> Optional[HarmonicMatch]:
-        """Get full match information for a MIDI key."""
-        result = self._mapping.get(midi_note)
-        if result is None:
+        """Get full match information for a MIDI key (lowest match)."""
+        matches = self._mapping.get(midi_note)
+        if matches is None:
             return None
         
-        n, deviation = result
+        n, deviation = matches[0]  # Use first match
         return HarmonicMatch(
             midi_note=midi_note,
             harmonic_n=n,
@@ -169,12 +178,32 @@ class KeyMapper:
             deviation_cents=deviation,
         )
     
+    def get_all_matches(self, midi_note: int) -> list[HarmonicMatch]:
+        """Get all matching harmonics for a MIDI key.
+        
+        Returns:
+            List of HarmonicMatch objects, sorted by harmonic number.
+        """
+        matches_data = self._mapping.get(midi_note)
+        if matches_data is None:
+            return []
+        
+        return [
+            HarmonicMatch(
+                midi_note=midi_note,
+                harmonic_n=n,
+                beacon_frequency=self.f1 * n,
+                deviation_cents=deviation,
+            )
+            for n, deviation in matches_data
+        ]
+    
     def get_beacon_frequency(self, midi_note: int) -> Optional[float]:
-        """Get the beacon frequency (f1 * n) for a MIDI key."""
-        result = self._mapping.get(midi_note)
-        if result is None:
+        """Get the beacon frequency (f1 * n) for a MIDI key (lowest match)."""
+        matches = self._mapping.get(midi_note)
+        if not matches:
             return None
-        return self.f1 * result[0]
+        return self.f1 * matches[0][0]
     
     def rebuild(
         self,
@@ -205,16 +234,22 @@ class KeyMapper:
         for midi in range(self.lowest_midi, self.highest_midi + 1):
             note = note_names[midi % 12]
             octave = (midi // 12) - 1
-            result = self._mapping.get(midi)
+            matches = self._mapping.get(midi)
             
-            if result is not None:
-                n, dev = result
+            if matches:
+                # Format first match
+                n, dev = matches[0]
                 freq = self.f1 * n
                 sign = '+' if dev >= 0 else ''
-                lines.append(
-                    f"MIDI {midi:3d} ({note:2s}{octave}) → n={n:3d} "
-                    f"({freq:8.2f} Hz) [{sign}{dev:.1f}¢]"
-                )
+                match_str = f"n={n:3d} ({freq:8.2f} Hz) [{sign}{dev:.1f}¢]"
+                
+                # Mention others
+                if len(matches) > 1:
+                    match_str += f" (+{len(matches)-1} others: "
+                    match_str += ", ".join([f"n={m[0]}" for m in matches[1:]])
+                    match_str += ")"
+                
+                lines.append(f"MIDI {midi:3d} ({note:2s}{octave}) → {match_str}")
             else:
                 lines.append(f"MIDI {midi:3d} ({note:2s}{octave}) → (no match)")
         

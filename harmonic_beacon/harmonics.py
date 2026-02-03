@@ -43,6 +43,9 @@ INTERVAL_NAMES: dict[int, str] = {
 MIDI_A4 = 69
 FREQ_A4 = 440.0
 
+# Maximum harmonic frequency (hearing limit)
+MAX_HARMONIC_FREQ = 20000.0
+
 
 def get_harmonic_number(midi_note: int) -> int:
     """Map a MIDI note number to its corresponding harmonic number (12-key mode).

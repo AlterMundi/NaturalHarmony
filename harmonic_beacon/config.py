@@ -62,14 +62,14 @@ DEFAULT_LFO_RATE = 1.0  # Hz
 # OFF = Smooth interpolation, ON = Stepped (discrete jumps)
 VIBRATO_MODE_CC = 23
 
-# CC number for transpose layer toggle (CC29)
-# OFF = Only borrowed harmonic, ON = Also play octave-transposed version
-TRANSPOSE_LAYER_CC = 29
+# CC number for multi-harmonic mode toggle (CC29)
+# OFF = Single voice (lowest harmonic), ON = Multiple harmonics within tolerance
+MULTI_HARMONIC_CC = 29
 
-# CC number for transpose mix slider (CC90)
-# 0 = Beacon only, 127 = Transposed only, 64 = Equal mix
-TRANSPOSE_MIX_CC = 90
-DEFAULT_TRANSPOSE_MIX = 0.5  # Equal mix (0.0 to 1.0)
+# CC number for max harmonics slider (CC90)
+# When multi-harmonic mode is ON, this sets how many harmonics to play (1-16)
+MAX_HARMONICS_CC = 90
+DEFAULT_MAX_HARMONICS = 4  # Play up to 4 harmonics when enabled
 
 # Maximum harmonic to search when finding matches
 MAX_HARMONIC = 128

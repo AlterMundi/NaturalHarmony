@@ -1,10 +1,10 @@
-"""Polyphony tracking for dual-voice management.
+"""Polyphony tracking for multi-voice management.
 
-Tracks active MIDI notes and their corresponding Beacon and Playable
-voice IDs and frequencies for proper Note-On/Note-Off handling.
+Tracks active MIDI notes and their corresponding voice IDs
+and frequencies for proper Note-On/Note-Off handling.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from . import config
@@ -12,47 +12,52 @@ from . import config
 
 @dataclass
 class VoicePair:
-    """Represents the voices triggered by a single MIDI note."""
+    """Represents the voices triggered by a single MIDI note.
+    
+    Can hold multiple voices if Multi-Harmonic mode is active.
+    """
     midi_note: int
     velocity: int
-    beacon_voice_id: int
-    playable_voice_id: int
-    # Store frequencies for note-off (Surge XT needs these)
-    beacon_frequency: float = 0.0
-    playable_frequency: float = 0.0
-    # Store original f₁ and harmonic for real-time pitch modulation
+    
+    # List of allocated voice IDs and their properties
+    voice_ids: list[int] = field(default_factory=list)
+    frequencies: list[float] = field(default_factory=list)
+    harmonic_ns: list[int] = field(default_factory=list)
+    
+    # Store original f₁ for real-time pitch modulation
     original_f1: float = 54.0
-    harmonic_n: int = 1
-    # Transposed layer (for borrowed keys with CC29/CC90)
-    transposed_voice_id: int = -1  # -1 means not active
+    
+    # Transposed layer (for borrowed keys)
+    transposed_voice_id: int = -1
     transposed_frequency: float = 0.0
     
+    @property
+    def beacon_voice_id(self) -> int:
+        """Get primary voice ID (first voice, for legacy compatibility)."""
+        return self.voice_ids[0] if self.voice_ids else -1
     
+    @property
+    def beacon_frequency(self) -> float:
+        """Get primary frequency (first voice)."""
+        return self.frequencies[0] if self.frequencies else 0.0
+        
+    @property
+    def harmonic_n(self) -> int:
+        """Get primary harmonic number (first voice)."""
+        return self.harmonic_ns[0] if self.harmonic_ns else 1
+
+
 class VoiceTracker:
     """Tracks active notes and manages voice ID allocation.
     
-    Each MIDI note triggers two voices:
-    - Beacon voice: The raw harmonic frequency
-    - Playable voice: The octave-reduced frequency
-    
-    This class manages voice IDs and ensures proper cleanup on Note-Off.
+    Supports allocating multiple harmonic voices per MIDI note.
     """
     
     def __init__(self, max_voices: int = config.MAX_VOICES):
-        """Initialize the voice tracker.
-        
-        Args:
-            max_voices: Maximum number of simultaneous voices
-        """
+        """Initialize the voice tracker."""
         self.max_voices = max_voices
-        
-        # Map MIDI note → VoicePair
         self._active_notes: dict[int, VoicePair] = {}
-        
-        # Voice ID pool (simple incrementing counter)
         self._next_voice_id = 0
-        
-        # Track last played note for aftertouch center feature
         self._last_played_note: Optional[int] = None
         
     def _allocate_voice_id(self) -> int:
@@ -65,93 +70,57 @@ class VoiceTracker:
         self, 
         midi_note: int, 
         velocity: int,
-        beacon_freq: float = 0.0,
-        playable_freq: float = 0.0,
+        frequencies: list[float],
+        harmonic_ns: list[int],
         original_f1: float = 54.0,
-        harmonic_n: int = 1,
-    ) -> tuple[int, int]:
+    ) -> list[int]:
         """Register a new note and allocate voice IDs.
-        
-        If the note is already active, it will be replaced (retriggered).
         
         Args:
             midi_note: MIDI note number (0-127)
             velocity: Note velocity (1-127)
-            beacon_freq: Frequency of the beacon voice in Hz
-            playable_freq: Frequency of the playable voice in Hz
-            original_f1: The f₁ value when note was triggered (for pitch mod)
-            harmonic_n: The harmonic number for this note
+            frequencies: List of frequencies to play
+            harmonic_ns: List of harmonic numbers
+            original_f1: The f₁ value when note was triggered
             
         Returns:
-            Tuple of (beacon_voice_id, playable_voice_id)
+            List of allocated voice IDs
         """
-        # If note already active, treat as retrigger
-        if midi_note in self._active_notes:
-            # Return existing IDs (caller should update frequency)
-            pair = self._active_notes[midi_note]
-            pair.velocity = velocity
-            pair.beacon_frequency = beacon_freq
-            pair.playable_frequency = playable_freq
-            pair.original_f1 = original_f1
-            pair.harmonic_n = harmonic_n
-            return pair.beacon_voice_id, pair.playable_voice_id
+        if not frequencies:
+            return []
         
-        # Allocate new voice IDs
-        beacon_id = self._allocate_voice_id()
-        playable_id = self._allocate_voice_id()
+        # Allocate voice IDs
+        voice_ids = [self._allocate_voice_id() for _ in frequencies]
         
-        self._active_notes[midi_note] = VoicePair(
+        # Create VoicePair
+        pair = VoicePair(
             midi_note=midi_note,
             velocity=velocity,
-            beacon_voice_id=beacon_id,
-            playable_voice_id=playable_id,
-            beacon_frequency=beacon_freq,
-            playable_frequency=playable_freq,
+            voice_ids=voice_ids,
+            frequencies=list(frequencies),
+            harmonic_ns=list(harmonic_ns),
             original_f1=original_f1,
-            harmonic_n=harmonic_n,
         )
         
-        # Track last played note for aftertouch center
+        self._active_notes[midi_note] = pair
         self._last_played_note = midi_note
         
-        return beacon_id, playable_id
+        return voice_ids
     
     def note_off(self, midi_note: int) -> Optional[VoicePair]:
-        """Release a note and return its voice pair.
-        
-        Args:
-            midi_note: MIDI note number (0-127)
-            
-        Returns:
-            VoicePair if note was active, None otherwise
-        """
+        """Release a note and return its voice pair."""
         return self._active_notes.pop(midi_note, None)
     
     def get_active_notes(self) -> dict[int, VoicePair]:
-        """Get all currently active notes.
-        
-        Returns:
-            Dictionary mapping MIDI note → VoicePair
-        """
+        """Get all currently active notes."""
         return self._active_notes.copy()
     
     def get_voice_pair(self, midi_note: int) -> Optional[VoicePair]:
-        """Get the voice pair for a specific MIDI note.
-        
-        Args:
-            midi_note: MIDI note number (0-127)
-            
-        Returns:
-            VoicePair if note is active, None otherwise
-        """
+        """Get the voice pair for a specific MIDI note."""
         return self._active_notes.get(midi_note)
     
     def clear(self) -> list[VoicePair]:
-        """Release all active notes.
-        
-        Returns:
-            List of VoicePairs for all notes that were active
-        """
+        """Release all active notes."""
         pairs = list(self._active_notes.values())
         self._active_notes.clear()
         return pairs
@@ -163,8 +132,13 @@ class VoiceTracker:
     
     @property
     def voice_count(self) -> int:
-        """Number of currently active voices (2 per note)."""
-        return len(self._active_notes) * 2
+        """Number of currently active voices."""
+        count = 0
+        for pair in self._active_notes.values():
+            count += len(pair.voice_ids)
+            if pair.transposed_voice_id >= 0:
+                count += 1
+        return count
     
     @property
     def last_played_note(self) -> Optional[int]:

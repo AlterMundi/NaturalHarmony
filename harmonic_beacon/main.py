@@ -14,7 +14,6 @@ from typing import Optional
 from . import config
 from .harmonics import (
     beacon_frequency,
-    playable_frequency,
     frequency_to_midi_float,
 )
 from .key_mapper import KeyMapper
@@ -122,9 +121,9 @@ class HarmonicBeacon:
         self.lfo_rate = config.DEFAULT_LFO_RATE
         self.vibrato_mode = VibratoMode.SMOOTH
         
-        # Transpose layer settings (for borrowed keys)
-        self.transpose_layer_enabled = True  # Toggled by CC29
-        self.transpose_mix = config.DEFAULT_TRANSPOSE_MIX  # 0=beacon, 1=transposed
+        # Multi-harmonic mode settings (CC29 toggle, CC90 count)
+        self.multi_harmonic_enabled = False  # Toggled by CC29
+        self.max_harmonics = config.DEFAULT_MAX_HARMONICS  # How many octave harmonics to play
         
         # Per-note LFOs for harmonic chorus
         self._note_lfos: dict[int, HarmonicLFO] = {}
@@ -215,9 +214,13 @@ class HarmonicBeacon:
         
         if self.verbose:
             print("\n✓ The Harmonic Beacon has stopped.")
-            
     def _handle_note_on(self, note: int, velocity: int) -> None:
-        """Handle a Note-On event with tolerance-based harmonic mapping."""
+        """Handle a Note-On event with tolerance-based harmonic mapping.
+        
+        For direct matches: plays the pure harmonic f1 × n
+        For borrowed keys: plays the harmonic octave-transposed down
+        When multi-harmonic mode is enabled: also plays octave-related harmonics
+        """
         current_f1 = self.f1.value
         
         # Try direct match first
@@ -233,101 +236,93 @@ class HarmonicBeacon:
                     print(f"♪ Note ON: MIDI {note} → (no harmonic match)")
                 return
         
-        # Get harmonic info from direct match or borrowed
+        # Build list of harmonics to play
+        frequencies: list[float] = []
+        harmonic_ns: list[int] = []
+        
         if match is not None:
+            # Direct match: pure harmonic frequency
             primary_n = match.harmonic_n
-            beacon_freq = current_f1 * primary_n
-            transposed_freq = None  # No transposition for direct matches
+            primary_freq = current_f1 * primary_n
+            frequencies.append(primary_freq)
+            harmonic_ns.append(primary_n)
+            
+            # Start checking from next octave
+            check_note = note + 12
         else:
+            # Borrowed key: harmonic octave-transposed to played range
             primary_n = borrowed.harmonic_n
             beacon_freq = current_f1 * primary_n
-            # Calculate octave-transposed frequency (bring down to played octave)
             transposed_freq = beacon_freq / (2 ** borrowed.octaves_borrowed)
+            frequencies.append(transposed_freq)
+            harmonic_ns.append(primary_n)
+            
+            # Start checking from the source octave (where the match was found)
+            # The source note is note + (12 * octaves_borrowed)
+            check_note = note + (12 * borrowed.octaves_borrowed)
+            
+        # Multi-harmonic mode: check higher octaves for matches
+        if self.multi_harmonic_enabled:
+            # For borrowed keys, we want to play the source harmonic first
+            # Logic: check_note is set correctly above for both cases
+            
+            while len(frequencies) < self.max_harmonics and check_note <= 108:
+                # Get match for this octave
+                octave_match = self._key_mapper.get_match(check_note)
+                
+                # If we have a match, add it
+                # For borrowed keys, the first check_note IS the source match, so it will be found here
+                if octave_match:
+                    freq = current_f1 * octave_match.harmonic_n
+                    # Avoid duplicates if source happened to qualify as primary (unlikely for borrowed)
+                    # But for borrowed, the primary voice is transposed, this one is pure.
+                    # So we process it.
+                    
+                    if freq <= 20000:  # Stay within hearing range
+                        frequencies.append(freq)
+                        harmonic_ns.append(octave_match.harmonic_n)
+                
+                check_note += 12
         
-        playable_freq = playable_frequency(current_f1, primary_n, note)
-        
-        # Determine if playable voice is needed (different from beacon by more than 1Hz)
-        # If they're essentially the same frequency, we only need one voice
-        needs_playable_voice = abs(playable_freq - beacon_freq) > 1.0
-        
-        # Set up LFO (single harmonic, no chorus needed)
+        # Set up LFO
         lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
-        lfo.set_harmonics([beacon_freq])
+        lfo.set_harmonics(frequencies)
         self._note_lfos[note] = lfo
         
-        # Calculate velocities based on mix (for borrowed keys with transpose layer)
-        if transposed_freq is not None and self.transpose_layer_enabled:
-            # Mix: 0.0 = full beacon, 1.0 = full transposed
-            beacon_vel = velocity * (1.0 - self.transpose_mix)
-            transposed_vel = velocity * self.transpose_mix
-        else:
-            beacon_vel = velocity
-            transposed_vel = 0
-        
-        # Allocate voices (playable_freq will be same as beacon if not needed separately)
-        beacon_id, playable_id = self.voices.note_on(
-            note, velocity, 
-            beacon_freq=beacon_freq, 
-            playable_freq=playable_freq if needs_playable_voice else beacon_freq,
+        # Allocate voices
+        vel_normalized = velocity / 127.0
+        voice_ids = self.voices.note_on(
+            note, velocity,
+            frequencies=frequencies,
+            harmonic_ns=harmonic_ns,
             original_f1=current_f1,
-            harmonic_n=primary_n,
         )
-        beacon_vel_normalized = beacon_vel / 127.0
-        
-        # Calculate transposed layer info (for borrowed keys with CC29/CC90)
-        transposed_id = -1
-        transposed_vel_normalized = 0.0
-        if transposed_freq is not None and self.transpose_layer_enabled and transposed_vel > 0:
-            transposed_vel_normalized = transposed_vel / 127.0
-            # Use playable_id + 1000 as a separate voice ID for transposed layer
-            transposed_id = playable_id + 1000
-            # Store in voice pair for note_off
-            pair = self.voices.get_voice_pair(note)
-            if pair is not None:
-                pair.transposed_voice_id = transposed_id
-                pair.transposed_frequency = transposed_freq
         
         # === Send to OSC ===
-        # Always send beacon voice
-        self.osc.send_note_on(beacon_id, beacon_freq, beacon_vel_normalized)
+        for i, voice_id in enumerate(voice_ids):
+            freq = frequencies[i]
+            n = harmonic_ns[i]
+            self.osc.send_note_on(voice_id, freq, vel_normalized)
+            self.osc.broadcast_voice_on(voice_id, freq, vel_normalized, note, n)
         
-        # Only send playable voice if it's a different frequency
-        if needs_playable_voice:
-            self.osc.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
-        
-        # Send transposed layer if enabled for borrowed keys
-        if transposed_id >= 0:
-            self.osc.send_note_on(transposed_id, transposed_freq, transposed_vel_normalized)
-        
-        # Broadcast to visualizer
+        # Broadcast key
         self.osc.broadcast_key_on(note, velocity)
-        self.osc.broadcast_voice_on(beacon_id, beacon_freq, beacon_vel_normalized, note, primary_n)
-        if needs_playable_voice:
-            self.osc.broadcast_voice_on(playable_id, playable_freq, beacon_vel_normalized, note, primary_n)
         
-        # === Send to MPE (same voices as OSC) ===
+        # === Send to MPE ===
         if self.mpe_enabled and self.mpe is not None:
-            # Beacon voice
-            self.mpe.send_note_on(beacon_id, beacon_freq, beacon_vel_normalized)
-            
-            # Playable voice (if different)
-            if needs_playable_voice:
-                self.mpe.send_note_on(playable_id, playable_freq, beacon_vel_normalized)
-            
-            # Transposed layer
-            if transposed_id >= 0:
-                self.mpe.send_note_on(transposed_id, transposed_freq, transposed_vel_normalized)
+            for i, voice_id in enumerate(voice_ids):
+                self.mpe.send_note_on(voice_id, frequencies[i], vel_normalized)
         
         if self.verbose:
             if match is not None:
                 sign = '+' if match.deviation_cents >= 0 else ''
                 print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
+                if len(frequencies) > 1:
+                    print(f"    + {len(frequencies)-1} octave harmonics: {harmonic_ns[1:]}")
             else:
                 print(f"♪ Note ON: MIDI {note} → n={primary_n} [borrowed from MIDI {borrowed.borrowed_midi}]")
-                if self.transpose_layer_enabled:
-                    print(f"    + Transposed: {transposed_freq:.2f} Hz (mix: {self.transpose_mix:.0%})")
-            print(f"    Beacon:   {beacon_freq:.2f} Hz")
-            print(f"    Playable: {playable_freq:.2f} Hz")
+            for i, freq in enumerate(frequencies):
+                print(f"    Voice {i+1}: n={harmonic_ns[i]} @ {freq:.2f} Hz")
             
     def _handle_note_off(self, note: int) -> None:
         """Handle a Note-Off event."""
@@ -338,54 +333,23 @@ class HarmonicBeacon:
         # Clean up LFO for this note
         self._note_lfos.pop(note, None)
         
-        # Check if playable voice was different from beacon (same logic as note_on)
-        playable_was_active = abs(pair.playable_frequency - pair.beacon_frequency) > 1.0
-        
-        # Check if transposed layer was active
-        transposed_was_active = pair.transposed_voice_id >= 0
-        
         # === Send to OSC ===
-        # Beacon voice
-        self.osc.send_note_off(
-            pair.beacon_voice_id, 
-            frequency=pair.beacon_frequency
-        )
+        for i, voice_id in enumerate(pair.voice_ids):
+            freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
+            self.osc.send_note_off(voice_id, frequency=freq)
+            self.osc.broadcast_voice_off(voice_id)
         
-        # Playable voice (if it was active)
-        if playable_was_active:
-            self.osc.send_note_off(
-                pair.playable_voice_id,
-                frequency=pair.playable_frequency
-            )
-        
-        # Transposed layer (if it was active)
-        if transposed_was_active:
-            self.osc.send_note_off(
-                pair.transposed_voice_id,
-                frequency=pair.transposed_frequency
-            )
-        
-        # Broadcast to visualizer
+        # Broadcast key off
         self.osc.broadcast_key_off(note)
-        self.osc.broadcast_voice_off(pair.beacon_voice_id)
-        if playable_was_active:
-            self.osc.broadcast_voice_off(pair.playable_voice_id)
         
-        # === Send to MPE (same voices as OSC) ===
+        # === Send to MPE ===
         if self.mpe_enabled and self.mpe is not None:
-            # Beacon voice
-            self.mpe.send_note_off(pair.beacon_voice_id, frequency=pair.beacon_frequency)
-            
-            # Playable voice (if it was active)
-            if playable_was_active:
-                self.mpe.send_note_off(pair.playable_voice_id, frequency=pair.playable_frequency)
-            
-            # Transposed layer (if it was active)
-            if transposed_was_active:
-                self.mpe.send_note_off(pair.transposed_voice_id, frequency=pair.transposed_frequency)
+            for i, voice_id in enumerate(pair.voice_ids):
+                freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
+                self.mpe.send_note_off(voice_id, frequency=freq)
         
         if self.verbose:
-            print(f"♫ Note OFF: MIDI {note}")
+            print(f"♫ Note OFF: MIDI {note} ({len(pair.voice_ids)} voices)")
             
     def _handle_f1_change(self, cc_value: int) -> None:
         """Handle f₁ modulation CC."""
@@ -404,56 +368,28 @@ class HarmonicBeacon:
         current_f1 = self.f1.value
         
         for note, pair in self.voices.get_active_notes().items():
-            # Check if playable voice was active (same logic as note_on/off)
-            playable_is_active = abs(pair.playable_frequency - pair.beacon_frequency) > 1.0
-            
-            # Check if transposed layer was active
-            transposed_is_active = pair.transposed_voice_id >= 0
-            
-            # Calculate new frequencies based on current f₁
-            new_beacon_freq = beacon_frequency(current_f1, pair.harmonic_n)
-            
-            # Calculate semitone offset from original beacon frequency
-            original_beacon_midi = frequency_to_midi_float(pair.beacon_frequency)
-            new_beacon_midi = frequency_to_midi_float(new_beacon_freq)
-            beacon_semitone_offset = new_beacon_midi - original_beacon_midi
-            
-            # === Send to OSC ===
-            self.osc.send_pitch_expression(pair.beacon_voice_id, beacon_semitone_offset)
-            
-            # Playable pitch expression
-            playable_semitone_offset = 0.0
-            if playable_is_active:
-                new_playable_freq = playable_frequency(
-                    current_f1, pair.harmonic_n, note
-                )
-                original_playable_midi = frequency_to_midi_float(pair.playable_frequency)
-                new_playable_midi = frequency_to_midi_float(new_playable_freq)
-                playable_semitone_offset = new_playable_midi - original_playable_midi
-                self.osc.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
-            
-            # Transposed pitch expression (same ratio as beacon)
-            if transposed_is_active and pair.transposed_frequency > 0:
-                # Transposed frequency scales proportionally with beacon
-                new_transposed_freq = pair.transposed_frequency * (new_beacon_freq / pair.beacon_frequency)
-                original_transposed_midi = frequency_to_midi_float(pair.transposed_frequency)
-                new_transposed_midi = frequency_to_midi_float(new_transposed_freq)
-                transposed_semitone_offset = new_transposed_midi - original_transposed_midi
-                self.osc.send_pitch_expression(pair.transposed_voice_id, transposed_semitone_offset)
-            
-            # === Send to MPE (same as OSC) ===
-            if self.mpe_enabled and self.mpe is not None:
-                self.mpe.send_pitch_expression(pair.beacon_voice_id, beacon_semitone_offset)
+            # Iterate through all voices for this note
+            for i, voice_id in enumerate(pair.voice_ids):
+                if i >= len(pair.frequencies) or i >= len(pair.harmonic_ns):
+                    continue
+                    
+                original_freq = pair.frequencies[i]
+                harmonic_n = pair.harmonic_ns[i]
                 
-                if playable_is_active:
-                    self.mpe.send_pitch_expression(pair.playable_voice_id, playable_semitone_offset)
+                # Calculate new frequency based on current f₁
+                new_freq = current_f1 * harmonic_n
                 
-                if transposed_is_active and pair.transposed_frequency > 0:
-                    new_transposed_freq = pair.transposed_frequency * (new_beacon_freq / pair.beacon_frequency)
-                    original_transposed_midi = frequency_to_midi_float(pair.transposed_frequency)
-                    new_transposed_midi = frequency_to_midi_float(new_transposed_freq)
-                    transposed_semitone_offset = new_transposed_midi - original_transposed_midi
-                    self.mpe.send_pitch_expression(pair.transposed_voice_id, transposed_semitone_offset)
+                # Calculate semitone offset from original frequency
+                original_midi = frequency_to_midi_float(original_freq)
+                new_midi = frequency_to_midi_float(new_freq)
+                semitone_offset = new_midi - original_midi
+                
+                # === Send to OSC ===
+                self.osc.send_pitch_expression(voice_id, semitone_offset)
+                
+                # === Send to MPE ===
+                if self.mpe_enabled and self.mpe is not None:
+                    self.mpe.send_pitch_expression(voice_id, semitone_offset)
     
     def _handle_modulation_note(self, note: int) -> None:
         """Handle note from secondary controller - modulate to new root.
@@ -589,30 +525,33 @@ class HarmonicBeacon:
                 print(f"🔄 Vibrato: {mode_name}")
             self.osc.broadcast_cc(config.VIBRATO_MODE_CC, cc_value)
     
-    def _handle_transpose_layer_toggle(self, cc_value: int) -> None:
-        """Handle transpose layer toggle (CC29).
+    def _handle_multi_harmonic_toggle(self, cc_value: int) -> None:
+        """Handle multi-harmonic mode toggle (CC29).
+        
+        When enabled, plays the same interval at multiple octaves.
         
         Args:
-            cc_value: CC value (0=disabled, 127=enabled)
+            cc_value: CC value (0=single voice, >=64=multi-harmonic)
         """
         enabled = cc_value >= 64
-        if enabled != self.transpose_layer_enabled:
-            self.transpose_layer_enabled = enabled
+        if enabled != self.multi_harmonic_enabled:
+            self.multi_harmonic_enabled = enabled
             if self.verbose:
                 state = "ON ✓" if enabled else "OFF ✗"
-                print(f"🎹 Transpose Layer: {state}")
+                print(f"🎹 Multi-Harmonic: {state}")
     
-    def _handle_transpose_mix_change(self, cc_value: int) -> None:
-        """Handle transpose mix CC (CC90).
+    def _handle_max_harmonics_change(self, cc_value: int) -> None:
+        """Handle max harmonics CC (CC90).
+        
+        Sets how many octave harmonics to play in multi-harmonic mode.
         
         Args:
-            cc_value: CC value (0=beacon only, 127=transposed only, 64=equal)
+            cc_value: CC value (0-127) maps to 1-16 harmonics
         """
-        self.transpose_mix = cc_value / 127.0
+        # Map 0-127 to 1-16 harmonics
+        self.max_harmonics = 1 + int(cc_value / 127.0 * 15)
         if self.verbose:
-            beacon_pct = int((1.0 - self.transpose_mix) * 100)
-            transposed_pct = int(self.transpose_mix * 100)
-            print(f"🎚️ Transpose Mix: {beacon_pct}% beacon / {transposed_pct}% transposed")
+            print(f"🎚️ Max Harmonics: {self.max_harmonics}")
     
     def _update_lfo_chorus(self, dt: float) -> None:
         """Update LFO chorus for all active notes.
@@ -684,11 +623,11 @@ class HarmonicBeacon:
                     elif self.midi.is_vibrato_mode_toggle(msg):
                         self._handle_vibrato_mode_toggle(msg.value)
                     
-                    elif self.midi.is_transpose_layer_toggle(msg):
-                        self._handle_transpose_layer_toggle(msg.value)
+                    elif self.midi.is_multi_harmonic_toggle(msg):
+                        self._handle_multi_harmonic_toggle(msg.value)
                     
-                    elif self.midi.is_transpose_mix_control(msg):
-                        self._handle_transpose_mix_change(msg.value)
+                    elif self.midi.is_max_harmonics_control(msg):
+                        self._handle_max_harmonics_change(msg.value)
                 
                 # Poll secondary controller for modulation notes
                 if self.secondary_midi is not None:
