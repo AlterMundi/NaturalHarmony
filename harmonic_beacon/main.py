@@ -125,6 +125,10 @@ class HarmonicBeacon:
         self.multi_harmonic_enabled = False  # Toggled by CC29
         self.max_harmonics = config.DEFAULT_MAX_HARMONICS  # How many octave harmonics to play
         
+        # Harmonic mix settings (CC28 lock, CC89 mix)
+        self.primary_lock = True  # If True, primary voice is always loud
+        self.harmonic_mix = 0.5   # 0=Secondary Only, 1=Primary Only (if lock OFF)
+        
         # Per-note LFOs for harmonic chorus
         self._note_lfos: dict[int, HarmonicLFO] = {}
         self._last_update_time = time.time()
@@ -298,12 +302,48 @@ class HarmonicBeacon:
             original_f1=current_f1,
         )
         
+        # Calculate Gains based on Mix Controls
+        # CC89=1.0 (Top) -> Primary Focused
+        # CC89=0.0 (Bottom) -> Harmonics Focused
+        
+        if self.primary_lock:
+            # Locked: Primary always Max, Mix controls Secondary level
+            p_gain_scale = 1.0
+            s_gain_scale = 1.0 - self.harmonic_mix
+        else:
+            # Unlocked: Crossfade
+            p_gain_scale = self.harmonic_mix
+            s_gain_scale = 1.0 - self.harmonic_mix
+            
         # === Send to OSC ===
         for i, voice_id in enumerate(voice_ids):
             freq = frequencies[i]
             n = harmonic_ns[i]
-            self.osc.send_note_on(voice_id, freq, vel_normalized)
-            self.osc.broadcast_voice_on(voice_id, freq, vel_normalized, note, n)
+            
+            # Determine gain for this voice
+            # Voice 0 is always Primary
+            scale = p_gain_scale if i == 0 else s_gain_scale
+            
+            voice_vel = vel_normalized * scale
+            
+            # Skip sending if silent (optional, but Surge might optimize)
+            # But we allocated a voice ID, so we should send it even if silent (gain 0)
+            # or Surge might not register the NoteID for later NoteOff?
+            # Safe to send with velocity 0? No, velocity 0 is Note Off!
+            # We must output at least min velocity if we want it "active" but silent?
+            # Or assume gain 0 means we strictly don't hear it.
+            # If we send Vel 0, it releases.
+            # So we should clamp to epsilon if we want it logically active?
+            # But the user might WANT it effectively off.
+            # If we don't send Note On, it won't exist.
+            # If we start it and then mute it, that's different.
+            # For now, let's clamp to 0.001 if it's meant to be active but silent mix.
+            
+            final_vel = max(0.001, voice_vel) if voice_vel > 0 else 0
+            
+            if final_vel > 0:
+                self.osc.send_note_on(voice_id, freq, final_vel)
+                self.osc.broadcast_voice_on(voice_id, freq, final_vel, note, n)
         
         # Broadcast key
         self.osc.broadcast_key_on(note, velocity)
@@ -311,7 +351,11 @@ class HarmonicBeacon:
         # === Send to MPE ===
         if self.mpe_enabled and self.mpe is not None:
             for i, voice_id in enumerate(voice_ids):
-                self.mpe.send_note_on(voice_id, frequencies[i], vel_normalized)
+                scale = p_gain_scale if i == 0 else s_gain_scale
+                voice_vel = vel_normalized * scale
+                final_vel = max(0.001, voice_vel) if voice_vel > 0 else 0
+                if final_vel > 0:
+                    self.mpe.send_note_on(voice_id, frequencies[i], final_vel)
         
         if self.verbose:
             if match is not None:
@@ -546,12 +590,40 @@ class HarmonicBeacon:
         Sets how many octave harmonics to play in multi-harmonic mode.
         
         Args:
-            cc_value: CC value (0-127) maps to 1-16 harmonics
+            cc_value: CC value (0-127) maps to 1-4 harmonics
         """
-        # Map 0-127 to 1-16 harmonics
-        self.max_harmonics = 1 + int(cc_value / 127.0 * 15)
+        # Map 0-127 to 1-4 harmonics
+        self.max_harmonics = 1 + int(cc_value / 127.0 * 3)
         if self.verbose:
             print(f"🎚️ Max Harmonics: {self.max_harmonics}")
+
+    def _handle_primary_lock_toggle(self, cc_value: int) -> None:
+        """Handle primary voice lock toggle (CC28).
+        
+        Args:
+            cc_value: CC value (>=64 is ON)
+        """
+        enabled = cc_value >= 64
+        if enabled != self.primary_lock:
+            self.primary_lock = enabled
+            if self.verbose:
+                state = "LOCKED 🔒" if enabled else "UNLOCKED 🔓"
+                print(f"⚓ Primary Voice: {state}")
+    
+    def _handle_harmonic_mix_change(self, cc_value: int) -> None:
+        """Handle harmonic mix slider (CC89).
+        
+        Controls balance between Primary (fundamental) and Additional Harmonics.
+        0 (Bottom) = Harmonics Focused
+        127 (Top) = Primary Focused
+        
+        Args:
+            cc_value: CC value (0-127)
+        """
+        self.harmonic_mix = cc_value / 127.0
+        if self.verbose:
+            mix_pct = int(self.harmonic_mix * 100)
+            print(f"🎚️ Harmonic Mix: {mix_pct}%")
     
     def _update_lfo_chorus(self, dt: float) -> None:
         """Update LFO chorus for all active notes.
@@ -628,6 +700,12 @@ class HarmonicBeacon:
                     
                     elif self.midi.is_max_harmonics_control(msg):
                         self._handle_max_harmonics_change(msg.value)
+                        
+                    elif self.midi.is_primary_lock_toggle(msg):
+                        self._handle_primary_lock_toggle(msg.value)
+                        
+                    elif self.midi.is_harmonic_mix_control(msg):
+                        self._handle_harmonic_mix_change(msg.value)
                 
                 # Poll secondary controller for modulation notes
                 if self.secondary_midi is not None:

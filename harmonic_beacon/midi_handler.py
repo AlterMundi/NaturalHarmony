@@ -150,6 +150,14 @@ class MidiHandler:
         """Check if a message is the max harmonics CC (CC90)."""
         return msg.type == "control_change" and msg.control == config.MAX_HARMONICS_CC
     
+    def is_primary_lock_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is the primary voice lock CC (CC28)."""
+        return msg.type == "control_change" and msg.control == config.PRIMARY_LOCK_CC
+    
+    def is_harmonic_mix_control(self, msg: mido.Message) -> bool:
+        """Check if a message is the harmonic mix CC (CC89)."""
+        return msg.type == "control_change" and msg.control == config.HARMONIC_MIX_CC
+    
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
         return NoteEvent(

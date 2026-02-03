@@ -71,6 +71,14 @@ MULTI_HARMONIC_CC = 29
 MAX_HARMONICS_CC = 90
 DEFAULT_MAX_HARMONICS = 4  # Play up to 4 harmonics when enabled
 
+# CC for Primary Voice Lock (CC28)
+# OFF = Primary voice participates in mix, ON = Primary voice always 100%
+PRIMARY_LOCK_CC = 28
+
+# CC for Harmonic Mix (CC89)
+# 0 = Only Harmonics (if lock off), 127 = Only Primary (if lock off)
+HARMONIC_MIX_CC = 89
+
 # Maximum harmonic to search when finding matches
 MAX_HARMONIC = 128
 
