@@ -520,6 +520,12 @@ class HarmonicBeacon:
         # Update global config anchor for compatibility
         config.ANCHOR_MIDI_NOTE = new_anchor
         
+        # Update all active voices with new frequencies
+        self._update_active_voices()
+        
+        # Broadcast new f1 to visualizer
+        self.osc.broadcast_f1(new_f1)
+        
         note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
         anchor_note = note_names[new_anchor % 12]
         anchor_octave_num = (new_anchor // 12) - 1
