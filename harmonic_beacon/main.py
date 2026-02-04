@@ -131,7 +131,13 @@ class HarmonicBeacon:
         
         # Natural Harmonics settings (CC30 toggle, CC92 level)
         self.natural_harmonics_enabled = False # Toggled by CC30
+        # Natural Harmonics settings (CC30 toggle, CC92 level)
+        self.natural_harmonics_enabled = False # Toggled by CC30
         self.natural_harmonics_level = config.DEFAULT_NATURAL_LEVEL
+        
+        # Pad Mode (Akai Force)
+        self.pad_mode_enabled = config.PAD_MODE_ENABLED_BY_DEFAULT
+
 
         
         # Per-note LFOs for harmonic chorus
@@ -226,12 +232,127 @@ class HarmonicBeacon:
     def _handle_note_on(self, note: int, velocity: int) -> None:
         """Handle a Note-On event with tolerance-based harmonic mapping.
         
-        Generates three layers of voices:
-        1. Primary: The fundamental played note.
-        2. Atmosphere: Spectral folding (if enabled) - clusters around the note.
-        3. Natural: High harmonics (if enabled) - playing original high frequencies.
+        Supports two modes:
+        1. Pad Mode: Direct mapping of 64 pads to harmonics 1-64.
+        2. Keyboard Mode: Standard tolerance-based mapping with Atmosphere/Natural layers.
         """
         current_f1 = self.f1.value
+        
+        # --- Check for Mode Toggle ---
+        if note == config.PAD_MODE_TOGGLE_NOTE:
+            self.pad_mode_enabled = not self.pad_mode_enabled
+            if self.verbose:
+                state = "PAD MODE (Akai Force)" if self.pad_mode_enabled else "KEYBOARD MODE"
+                print(f"\n🎛️ Switched to: {state}\n")
+            # Don't play sound for the toggle button
+            return
+
+        # =========================================================================
+        # MODE 1: PAD MODE (Direct Harmonic Mapping)
+        # =========================================================================
+        if self.pad_mode_enabled:
+            # Map Akai Force pads to harmonic index n
+            # Force Layout (Key mode, or custom logic derived from user input):
+            # Bottom Left (110) = n=1
+            # Next Right (111) = n=2
+            # Row above (note - 8) logic?
+            # User Input: BottomLeft=110, Right=111, TopRight=61.
+            # 8 rows of 8 pads? 64 pads total.
+            # 110, 111... 117 (Row 1)
+            # Row 2 (Above)? Note 110 -> TopRight 61 implies decreasing notes going UP.
+            # Let's check the math:
+            # If Bottom Left = 110.
+            # If Top Right = 61.
+            # 110 -> 61 is decreasing.
+            # If rows are 8 pads wide.
+            # User observed: Left=110, Right=111. So x increases with note.
+            # So Rows must jump DOWN in note value?
+            # Difference between rows?
+            # If Top Right is 61.
+            # Let's assume standard grid 8x8.
+            # Row 1 (Bottom): 110 ... 117?
+            # Row 8 (Top): ... 61?
+            # 117 - 61 = 56?
+            # 56 / 7 intervals = 8.
+            # So each row UP subtracts 8 from the start?
+            # Let's test:
+            # Row 1: 110, 111, ..., 117
+            # Row 2: 102, 103, ..., 109
+            # ...
+            # Row 8: 54, ..., 61.
+            # Wait, 54 + 7 = 61.
+            # So the logic holds: Notes decrease by 8 per row UP.
+            
+            # Mapping Formula:
+            # Relative Note = Note - 110 is wrong if notes decrease.
+            # Let's calculate coordinates (x, y) where x=0..7 (col), y=0..7 (row from bottom).
+            # We know: Note increases by 1 for x+1.
+            # Note decreases by 8 for y+1.
+            # note = Anchor + x - 8*y
+            # We want n = 1 + x + 8*y
+            # Solved for x, y?
+            # x = (note - Anchor) % 8 ?
+            # If Anchor=110. Note=110 -> Remainder?
+            # Note 102 (Row 2, col 1): 102 - 110 = -8. -8 % 8 = 0. Correct.
+            # Note 111 (Row 1, col 2): 111 - 110 = 1. 1 % 8 = 1. Correct.
+            # So x = (note - Anchor) % 8
+            # Now y:
+            # note = Anchor + x - 8*y
+            # 8*y = Anchor + x - note
+            # y = (Anchor + x - note) / 8
+            
+            anchor = config.PAD_ANCHOR_NOTE
+            x = (note - anchor) % 8
+            y = (anchor + x - note) // 8
+            
+            # Calculate harmonic number (1-indexed)
+            # n = 1 + x + (y * 8)
+            n = 1 + x + (y * 8)
+            
+            # Validity check
+            if n < 1 or n > 64:
+                # Pad out of range (or pressed button outside grid)
+                if self.verbose:
+                     # print(f"Ignored Note {note} (Computed n={n})")
+                     pass
+                return
+                
+            frequency = current_f1 * n
+            
+            # Allocate Voice
+            # In Pad Mode, we treat everything as partials of the fundamental.
+            # Voices need unique IDs. VoiceTracker handles this by Note Number.
+            # But here, multiple pads could be pressed.
+            # We map MIDI note -> Voice.
+            # VoiceTracker.note_on expects frequencies list.
+            
+            voice_ids = self.voices.note_on(
+                note, velocity,
+                frequencies=[frequency],
+                harmonic_ns=[n],
+                original_f1=current_f1
+            )
+            
+            # Send to OSC
+            # Simple 1-to-1 mapping
+            if voice_ids:
+                 vid = voice_ids[0]
+                 vel_norm = velocity / 127.0
+                 self.osc.send_note_on(vid, frequency, vel_norm)
+                 self.osc.broadcast_voice_on(vid, frequency, vel_norm, note, n)
+            
+            # MPE
+            if self.mpe_enabled and self.mpe is not None and voice_ids:
+                 self.mpe.send_note_on(voice_ids[0], frequency, vel_norm)
+            
+            if self.verbose:
+                 print(f"🎛️ Pad {n} (Grid {x},{y}) → {frequency:.1f} Hz")
+            
+            return
+
+        # =========================================================================
+        # MODE 2: KEYBOARD MODE (Standard)
+        # =========================================================================
         
         # --- 1. Determine Primary Match ---
         match = self._key_mapper.get_match(note)

@@ -35,7 +35,7 @@ HIGHEST_MIDI_NOTE = 108 # C8
 
 # Pattern to match MIDI input port name (case-insensitive substring match)
 # Set to None to use the first available port
-MIDI_PORT_PATTERN = "KeyLab"
+MIDI_PORT_PATTERN = "Force"
 
 # Secondary controller for modulation (e.g., Minilab3)
 # Notes on this controller trigger modulation without producing sound
@@ -109,6 +109,19 @@ BROADCAST_PORT = 9001
 OSC_NOTE_ON = "/surge/noteon"
 OSC_NOTE_OFF = "/surge/noteoff"
 OSC_PARAMETER = "/surge/param"
+
+# =============================================================================
+# Pad Mode Configuration (Akai Force)
+# =============================================================================
+
+# Toggle Note for Pad Mode (Button/Note used to switch modes)
+# Note 1 = A specific button on Force
+PAD_MODE_TOGGLE_NOTE = 1
+
+# Anchor Note: The MIDI note number of the Bottom-Left Pad (Pad 1)
+# On Akai Force (Controller Mode), bottom-left is often 110 (or varies by oct shift)
+PAD_ANCHOR_NOTE = 110
+PAD_MODE_ENABLED_BY_DEFAULT = False
 
 # =============================================================================
 # Voice Management
