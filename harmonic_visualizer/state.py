@@ -43,6 +43,9 @@ class VisualizerState:
     # Recently released voices for fade-out animation
     fading_voices: dict[int, VoiceState] = field(default_factory=dict)
     
+    # Mode State
+    pad_mode_enabled: bool = False
+    
     def voice_on(self, voice_id: int, freq: float, gain: float, source_note: int, harmonic_n: int) -> None:
         """Register a voice activation."""
         self.voices[voice_id] = VoiceState(

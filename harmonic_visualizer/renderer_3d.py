@@ -294,25 +294,57 @@ class Renderer3D:
         self.ctx.screen.use()
         self.ctx.clear(0.02, 0.02, 0.05, 1.0)
         
-        # Zoomed-in camera: map horizontal screen space exactly to our ruler width
-        # This makes the keyboard and ruler fill the width regardless of aspect ratio
-        half_w = self.ruler_width / 2
-        proj = create_ortho_matrix(-half_w, half_w, -2, 2, -10, 10)
-        view = np.eye(4, dtype='f4')
+        # Render components based on Mode
+        if self.state.pad_mode_enabled:
+             # Use a simpler ortho for grid: -1 to 1 normalized
+             # But keep aspect ratio? 
+             # Let's use 8x8 grid space 
+             # 8 units width, 8 units height.
+             # Center at 0,0.
+             # x range: -4 to 4. y range: -4 to 4.
+             
+             # Adjust projection for grid
+             grid_size = 8.0
+             # Add padding
+             view_size = 9.0 
+             
+             # Maintain aspect ratio
+             aspect = self.screen_width / self.screen_height
+             if aspect > 1:
+                 w = view_size * aspect
+                 h = view_size
+             else:
+                 w = view_size
+                 h = view_size / aspect
+                 
+             proj = create_ortho_matrix(-w/2, w/2, -h/2, h/2, -10, 10)
+             self.prog['projection'].write(proj.tobytes())
+             
+             self._render_pad_grid()
+             
+             # Overlay Pad Numbers (Separate pass)
+             self._render_pad_labels_overlay()
+             
+             # Pad mode specific HUD? Or standard?
+             if self.show_hud:
+                 self._render_hud()
+        else:
+            # Zoomed-in camera: map horizontal screen space exactly to our ruler width
+            # This makes the keyboard and ruler fill the width regardless of aspect ratio
+            half_w = self.ruler_width / 2
+            proj = create_ortho_matrix(-half_w, half_w, -2, 2, -10, 10)
+            
+            self.prog['projection'].write(proj.tobytes())
+            
+            self._render_keyboard()
+            self._render_frequency_ruler()
+            self._render_harmonic_slots()
+            
+            if self.show_energy_lines:
+                self._render_particles()
         
-        self.prog['projection'].write(proj.tobytes())
-        self.prog['view'].write(view.tobytes())
-        
-        # Render components (keyboard on top, ruler below)
-        self._render_keyboard()
-        self._render_frequency_ruler()
-        self._render_harmonic_slots()
-        
-        if self.show_energy_lines:
-            self._render_particles()
-        
-        if self.show_hud:
-            self._render_hud()
+            if self.show_hud:
+                self._render_hud()
         
         pygame.display.flip()
     
@@ -758,3 +790,126 @@ class Renderer3D:
             )
             vao.render(moderngl.TRIANGLES)
             vbo.release()
+
+    def _render_pad_grid(self) -> None:
+        """Render 8x8 Pad Mode Grid."""
+        vertices = []
+        
+        # Grid settings - Match Akai Force Layout
+        # Bottom-Left is n=1 (x=0, y=0)
+        grid_start_x = -4.0
+        grid_start_y = -4.0
+        cell_size = 1.0
+        pad_size = 0.9
+        padding = (cell_size - pad_size) / 2
+        
+        active_voices = {v.harmonic_n: v for v in self.state.get_all_visible_voices() if v.glow > 0.01}
+        
+        for y in range(8):
+            for x in range(8):
+                n = 1 + x + (8 * y)
+                voice = active_voices.get(n)
+                
+                if voice:
+                    glow = voice.glow * voice.gain
+                    t = n / 64.0
+                    r = 0.2 + 0.8 * glow
+                    g = 0.2 + 0.5 * glow * (1-t)
+                    b = 0.4 + 0.6 * t + 0.2 * glow
+                    a = 0.8
+                else:
+                    glow = 0.0
+                    r, g, b = 0.1, 0.1, 0.12
+                    a = 0.5
+
+                px = grid_start_x + x * cell_size + padding + pad_size/2
+                py = grid_start_y + y * cell_size + padding + pad_size/2
+                
+                half = pad_size / 2
+                corners = [
+                    (px - half, py - half, 0),
+                    (px + half, py - half, 0),
+                    (px + half, py + half, 0),
+                    (px - half, py - half, 0),
+                    (px + half, py + half, 0),
+                    (px - half, py + half, 0),
+                ]
+                
+                for pos in corners:
+                    vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
+                
+        if vertices:
+            vertices = np.array(vertices, dtype='f4')
+            vbo = self.ctx.buffer(vertices.tobytes())
+            vao = self.ctx.vertex_array(
+                self.prog,
+                [(vbo, '3f 4f 1f', 'in_position', 'in_color', 'in_glow')]
+            )
+            vao.render(moderngl.TRIANGLES)
+            vbo.release()
+
+    def _render_pad_labels_overlay(self) -> None:
+        """Render text labels for pads onto a separate HUD pass."""
+        if not self.hud_surface or not self.hud_texture:
+            return
+
+        self.hud_surface.fill((0, 0, 0, 0))
+        
+        grid_start_x = -4.0
+        grid_start_y = -4.0
+        cell_size = 1.0
+        pad_size = 0.9
+        padding = (cell_size - pad_size) / 2
+        
+        active_voices = {v.harmonic_n: v for v in self.state.get_all_visible_voices() if v.glow > 0.01}
+        
+        # Helper to project world to screen (simplified for Ortho)
+        view_size = 9.0 
+        aspect = self.screen_width / self.screen_height
+        if aspect > 1:
+            w = view_size * aspect
+            h = view_size
+        else:
+            w = view_size
+            h = view_size / aspect
+            
+        def world_to_screen(wx, wy):
+            ndc_x = wx / (w/2)
+            ndc_y = wy / (h/2)
+            sx = (ndc_x + 1) * 0.5 * self.screen_width
+            sy = (1 - (ndc_y + 1) * 0.5) * self.screen_height
+            return int(sx), int(sy)
+
+        for y in range(8):
+            for x in range(8):
+                n = 1 + x + (8 * y)
+                voice = active_voices.get(n)
+                
+                px = grid_start_x + x * cell_size + padding + pad_size/2
+                py = grid_start_y + y * cell_size + padding + pad_size/2
+                
+                sx, sy = world_to_screen(px, py)
+                
+                if voice:
+                    col = (255, 255, 255)
+                    txt = f"{n}"
+                    surf = self.font.render(txt, True, col)
+                    dest = surf.get_rect(center=(sx, sy - 10))
+                    self.hud_surface.blit(surf, dest)
+                    
+                    f_txt = f"{voice.frequency:.0f}"
+                    f_surf = self.font.render(f_txt, True, (200, 200, 200))
+                    dest_f = f_surf.get_rect(center=(sx, sy + 10))
+                    self.hud_surface.blit(f_surf, dest_f)
+                else:
+                    col = (80, 80, 80)
+                    txt = f"{n}"
+                    surf = self.font.render(txt, True, col)
+                    dest = surf.get_rect(center=(sx, sy))
+                    self.hud_surface.blit(surf, dest)
+
+        # Upload and Render
+        texture_data = pygame.image.tostring(self.hud_surface, 'RGBA', False)
+        self.hud_texture.write(texture_data)
+        self.hud_texture.use(0)
+        self.hud_vao.render(moderngl.TRIANGLE_STRIP)

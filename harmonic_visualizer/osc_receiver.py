@@ -55,6 +55,7 @@ class OscReceiver:
         self._server.add_method("/beacon/key/on", None, self._handle_key_on)
         self._server.add_method("/beacon/key/off", None, self._handle_key_off)
         self._server.add_method("/beacon/cc", None, self._handle_cc)
+        self._server.add_method("/beacon/mode/pad", None, self._handle_pad_mode)
         
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -125,3 +126,7 @@ class OscReceiver:
         """Handle /beacon/cc message."""
         cc_num, value = args
         self.state.update_cc(cc_num, value)
+
+    def _handle_pad_mode(self, path: str, args: list) -> None:
+        """Handle /beacon/mode/pad message."""
+        self.state.pad_mode_enabled = bool(args[0])

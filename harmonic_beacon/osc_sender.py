@@ -280,6 +280,21 @@ class OscSender:
             ("i", int(cc_num)),
             ("i", int(value)),
         )
+        
+    def broadcast_pad_mode(self, enabled: bool) -> None:
+        """Broadcast Pad Mode status to visualizer.
+        
+        Args:
+            enabled: True if Pad Mode is active, False for Keyboard Mode
+        """
+        if self._broadcast_target is None:
+            return
+        # Send as int (1/0)
+        liblo.send(
+            self._broadcast_target, 
+            "/beacon/mode/pad", 
+            ("i", 1 if enabled else 0)
+        )
     
     @property
     def is_open(self) -> bool:
@@ -405,4 +420,7 @@ class MockOscSender(OscSender):
         pass
     
     def broadcast_cc(self, cc_num: int, value: int) -> None:
+        pass
+
+    def broadcast_pad_mode(self, enabled: bool) -> None:
         pass

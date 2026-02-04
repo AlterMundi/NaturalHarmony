@@ -244,6 +244,10 @@ class HarmonicBeacon:
             if self.verbose:
                 state = "PAD MODE (Akai Force)" if self.pad_mode_enabled else "KEYBOARD MODE"
                 print(f"\n🎛️ Switched to: {state}\n")
+            
+            # Broadcast state to visualizer
+            self.osc.broadcast_pad_mode(self.pad_mode_enabled)
+            
             # Don't play sound for the toggle button
             return
 
