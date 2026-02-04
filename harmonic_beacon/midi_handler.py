@@ -210,6 +210,10 @@ class MidiHandler:
     def is_natural_level_control(self, msg: mido.Message) -> bool:
         """Check if a message is the Natural Harmonics Level control (CC92)."""
         return msg.type == "control_change" and msg.control == config.NATURAL_LEVEL_CC
+
+    def is_panic_cc(self, msg: mido.Message) -> bool:
+        """Check if a message is the Panic button CC (e.g. 111)."""
+        return msg.type == "control_change" and msg.control == config.PANIC_NOTE
     
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""

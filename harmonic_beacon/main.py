@@ -945,6 +945,9 @@ class HarmonicBeacon:
                     elif self.midi.is_natural_level_control(msg):
                         self._handle_natural_level_change(msg.value)
 
+                    elif self.midi.is_panic_cc(msg) and msg.value > 0:
+                        self.panic()
+
                 
                 # Poll secondary controller for modulation notes
                 if self.secondary_midi is not None:
