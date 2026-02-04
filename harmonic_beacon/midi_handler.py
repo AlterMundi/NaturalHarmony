@@ -158,6 +158,14 @@ class MidiHandler:
         """Check if a message is the harmonic mix CC (CC89)."""
         return msg.type == "control_change" and msg.control == config.HARMONIC_MIX_CC
     
+    def is_natural_harmonics_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is the Natural Harmonics toggle (CC30)."""
+        return msg.type == "control_change" and msg.control == config.NATURAL_HARMONICS_CC
+    
+    def is_natural_level_control(self, msg: mido.Message) -> bool:
+        """Check if a message is the Natural Harmonics Level control (CC92)."""
+        return msg.type == "control_change" and msg.control == config.NATURAL_LEVEL_CC
+    
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
         return NoteEvent(

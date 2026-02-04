@@ -75,6 +75,15 @@ DEFAULT_MAX_HARMONICS = 4  # Play up to 4 harmonics when enabled
 # OFF = Primary voice participates in mix, ON = Primary voice always 100%
 PRIMARY_LOCK_CC = 28
 
+# CC number for Natural Harmonics Mode toggle (CC30)
+# OFF = Disable, ON = Play harmonics at original frequency
+NATURAL_HARMONICS_CC = 30
+
+# CC number for Natural Harmonics Level slider (CC92)
+# Controls volume of natural harmonics (0-127)
+NATURAL_LEVEL_CC = 92
+DEFAULT_NATURAL_LEVEL = 64  # Mid-volume default
+
 # CC for Harmonic Mix (CC89)
 # 0 = Only Harmonics (if lock off), 127 = Only Primary (if lock off)
 HARMONIC_MIX_CC = 89

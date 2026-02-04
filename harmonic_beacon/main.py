@@ -129,6 +129,11 @@ class HarmonicBeacon:
         self.primary_lock = True  # If True, primary voice is always loud
         self.harmonic_mix = 0.5   # 0=Secondary Only, 1=Primary Only (if lock OFF)
         
+        # Natural Harmonics settings (CC30 toggle, CC92 level)
+        self.natural_harmonics_enabled = False # Toggled by CC30
+        self.natural_harmonics_level = config.DEFAULT_NATURAL_LEVEL
+
+        
         # Per-note LFOs for harmonic chorus
         self._note_lfos: dict[int, HarmonicLFO] = {}
         self._last_update_time = time.time()
@@ -221,111 +226,137 @@ class HarmonicBeacon:
     def _handle_note_on(self, note: int, velocity: int) -> None:
         """Handle a Note-On event with tolerance-based harmonic mapping.
         
-        For direct matches: plays the pure harmonic f1 × n
-        For borrowed keys: plays the harmonic octave-transposed down
-        When multi-harmonic mode is enabled: also plays octave-related harmonics
+        Generates three layers of voices:
+        1. Primary: The fundamental played note.
+        2. Atmosphere: Spectral folding (if enabled) - clusters around the note.
+        3. Natural: High harmonics (if enabled) - playing original high frequencies.
         """
         current_f1 = self.f1.value
         
-        # Try direct match first
+        # --- 1. Determine Primary Match ---
         match = self._key_mapper.get_match(note)
         borrowed = None
         
         if match is None:
-            # No direct match - try octave borrowing
             borrowed = self._borrower.borrow(note)
             if borrowed is None:
-                # No match even with borrowing - skip
                 if self.verbose:
                     print(f"♪ Note ON: MIDI {note} → (no harmonic match)")
                 return
         
-        # Build list of harmonics to play
+        # Lists to populate
         frequencies: list[float] = []
         harmonic_ns: list[int] = []
+        target_gains: list[float] = []
         
+        # --- 2. Add Primary Voice ---
         if match is not None:
-            # Direct match: pure harmonic frequency
+            # Direct match
             primary_n = match.harmonic_n
             primary_freq = current_f1 * primary_n
+            
             frequencies.append(primary_freq)
             harmonic_ns.append(primary_n)
             
-            # Start checking from next octave
-            check_note = note + 12
+            # Start checks from next octave
+            check_note_atmosphere = note + 12
+            check_note_natural = note + 12
         else:
-            # Borrowed key: harmonic octave-transposed to played range
+            # Borrowed
             primary_n = borrowed.harmonic_n
             beacon_freq = current_f1 * primary_n
             transposed_freq = beacon_freq / (2 ** borrowed.octaves_borrowed)
+            
             frequencies.append(transposed_freq)
             harmonic_ns.append(primary_n)
             
-            # Start checking from the source octave (where the match was found)
-            # The source note is note + (12 * octaves_borrowed)
-            check_note = note + (12 * borrowed.octaves_borrowed)
-            
-        # Multi-harmonic mode: Spectral Folding (Atmosphere)
+            # Start checks from source octave
+            source_note = note + (12 * borrowed.octaves_borrowed)
+            check_note_atmosphere = source_note  # For folding, we scan from source
+            check_note_natural = source_note     # For natural, we scan from source
+            # Actually for Natural, if we are playing C3 (borrowed from C4), 
+            # we want natural harmonics of C3? Or C4?
+            # If we play C3, we want to hear the timbre of C3.
+            # But C3 is "fake" (borrowed).
+            # The "Natural" logic scans for matches in *played* key context usually.
+            # But the system knows C4 is the match.
+            # If we scan relative to C3 (check_note_natural = note + 12), we might find C4.
+            # Let's stick to scanning relative to the *played* note for Natural, 
+            # checking if *those* notes have matches.
+            check_note_natural = note + 12
+        
+        # Calculate Primary Gain
+        if self.primary_lock:
+            p_gain = 1.0
+        else:
+            p_gain = self.harmonic_mix
+        target_gains.append(p_gain)
+        
+        # --- 3. Atmosphere (Spectral Folding) ---
         if self.multi_harmonic_enabled:
-            # We want to find harmonies from the upper series and fold them down
-            # to the played octave to create a cluster.
+            # Secondary gain (controlled by Harmonic Mix)
+            s_gain = 1.0 - self.harmonic_mix
             
-            # Use a Set for deduplication of frequencies (avoid phase issues)
-            # Add primary frequency first (rounded for comparison)
             existing_freqs = {round(frequencies[0], 2)}
             
-            # Scan upwards through octaves
-            octaves_scanned = 0
-            while len(frequencies) < self.max_harmonics and check_note <= 108:
-                # Use get_all_matches to capture every valid harmonic in the octave
+            # Use check_note_atmosphere for scanning
+            check_note = check_note_atmosphere
+            
+            while len(frequencies) < self.max_harmonics + 1 and check_note <= 108: # +1 for primary
+                # Get all matches in this octave
                 octave_matches = self._key_mapper.get_all_matches(check_note)
                 
-                # Calculate how many octaves down we need to transpose
-                # For direct match: check_note = note + 12*k -> transpose down k
-                # For borrowed: check_note starts at source. Source is transposed down 'borrowed.octaves_borrowed'.
-                # Each subsequent check_note is +1 octave relative to previous.
-                
-                # Simplest way: transpose down to the target range of the primary freq.
-                # Target range is approx 'current_f1 * match.harmonic_n / 2**k'
-                # We want result ~ frequencies[0]
-                
-                for match in octave_matches:
-                    if len(frequencies) >= self.max_harmonics:
+                for m in octave_matches:
+                    if len(frequencies) >= self.max_harmonics + 1:
                         break
-                        
-                    raw_freq = current_f1 * match.harmonic_n
                     
-                    # Determine fold factor
-                    # We want the freq to be in the same octave as frequencies[0]
-                    # So we divide by 2 until it is within [freq[0]/1.5, freq[0]*1.5] roughly?
-                    # Or simpler: we know exactly how many octaves above 'note' 'check_note' is.
-                    # distance_semitones = check_note - note
-                    # octaves_diff = distance_semitones / 12 (approx, borrowed might be offset)
-                    # Actually, borrowed keys might not be octaves aligned if anchor is unusual?
-                    # But get_all_matches searches MIDI keys.
-                    # MIDI keys are semitones. 12 semitones = 1 octave? 
-                    # KeyMapper maps keys to Harmonics.
-                    # If I play D4, and check D5. D5 is 12 semitones up.
-                    # If I find a match at D5, its frequency is naturally ~2x D4.
-                    # So I should divide by 2.
-                    # If I check D6 (24 semitones), divide by 4.
+                    raw_freq = current_f1 * m.harmonic_n
                     
-                    # Calculate octave difference from the PLAYED note
+                    # Fold down to proximity of played note
+                    # Calculate octave difference from PLAYED note
                     semitone_diff = check_note - note
                     fold_octaves = round(semitone_diff / 12)
-                    
                     folded_freq = raw_freq / (2 ** fold_octaves)
                     
-                    # Deduplicate
                     if round(folded_freq, 2) not in existing_freqs:
                         frequencies.append(folded_freq)
-                        harmonic_ns.append(match.harmonic_n)
+                        harmonic_ns.append(m.harmonic_n)
+                        target_gains.append(s_gain)
                         existing_freqs.add(round(folded_freq, 2))
                 
                 check_note += 12
-                octaves_scanned += 1
+
+        # --- 4. Natural Harmonics (Original Frequencies) ---
+        if self.natural_harmonics_enabled:
+            # Natural gain (controlled by CC92)
+            n_gain = self.natural_harmonics_level / 127.0
+            
+            # Simple scan upwards from the played note
+            # We look for direct matches in higher octaves
+            check_note = check_note_natural
+            
+            # Safety limit: don't go crazy with voices
+            max_natural_voices = 16 
+            natural_count = 0
+            
+            while natural_count < max_natural_voices and check_note <= 108:
+                # Check for match at this specific note
+                nat_match = self._key_mapper.get_match(check_note)
+                
+                if nat_match:
+                    freq = current_f1 * nat_match.harmonic_n
+                    if freq <= 20000:
+                        frequencies.append(freq)
+                        harmonic_ns.append(nat_match.harmonic_n)
+                        target_gains.append(n_gain)
+                        natural_count += 1
+                
+                check_note += 12
         
-        # Set up LFO
+        # --- 5. Voice Allocation & Setup ---
+        
+        # Set up LFO (only affects Primary/Atmosphere typically, or all?)
+        # Logic applies "frequencies" to LFO. So it affects all.
         lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
         lfo.set_harmonics(frequencies)
         self._note_lfos[note] = lfo
@@ -338,44 +369,16 @@ class HarmonicBeacon:
             harmonic_ns=harmonic_ns,
             original_f1=current_f1,
         )
-        
-        # Calculate Gains based on Mix Controls
-        # CC89=1.0 (Top) -> Primary Focused
-        # CC89=0.0 (Bottom) -> Harmonics Focused
-        
-        if self.primary_lock:
-            # Locked: Primary always Max, Mix controls Secondary level
-            p_gain_scale = 1.0
-            s_gain_scale = 1.0 - self.harmonic_mix
-        else:
-            # Unlocked: Crossfade
-            p_gain_scale = self.harmonic_mix
-            s_gain_scale = 1.0 - self.harmonic_mix
             
-        # === Send to OSC ===
+        # --- 6. Send to OSC ---
         for i, voice_id in enumerate(voice_ids):
             freq = frequencies[i]
             n = harmonic_ns[i]
+            gain_scale = target_gains[i]
             
-            # Determine gain for this voice
-            # Voice 0 is always Primary
-            scale = p_gain_scale if i == 0 else s_gain_scale
+            voice_vel = vel_normalized * gain_scale
             
-            voice_vel = vel_normalized * scale
-            
-            # Skip sending if silent (optional, but Surge might optimize)
-            # But we allocated a voice ID, so we should send it even if silent (gain 0)
-            # or Surge might not register the NoteID for later NoteOff?
-            # Safe to send with velocity 0? No, velocity 0 is Note Off!
-            # We must output at least min velocity if we want it "active" but silent?
-            # Or assume gain 0 means we strictly don't hear it.
-            # If we send Vel 0, it releases.
-            # So we should clamp to epsilon if we want it logically active?
-            # But the user might WANT it effectively off.
-            # If we don't send Note On, it won't exist.
-            # If we start it and then mute it, that's different.
-            # For now, let's clamp to 0.001 if it's meant to be active but silent mix.
-            
+            # Clamp for minimal activity if intended
             final_vel = max(0.001, voice_vel) if voice_vel > 0 else 0
             
             if final_vel > 0:
@@ -385,11 +388,11 @@ class HarmonicBeacon:
         # Broadcast key
         self.osc.broadcast_key_on(note, velocity)
         
-        # === Send to MPE ===
+        # --- 7. Send to MPE ---
         if self.mpe_enabled and self.mpe is not None:
             for i, voice_id in enumerate(voice_ids):
-                scale = p_gain_scale if i == 0 else s_gain_scale
-                voice_vel = vel_normalized * scale
+                gain_scale = target_gains[i]
+                voice_vel = vel_normalized * gain_scale
                 final_vel = max(0.001, voice_vel) if voice_vel > 0 else 0
                 if final_vel > 0:
                     self.mpe.send_note_on(voice_id, frequencies[i], final_vel)
@@ -398,12 +401,18 @@ class HarmonicBeacon:
             if match is not None:
                 sign = '+' if match.deviation_cents >= 0 else ''
                 print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
-                if len(frequencies) > 1:
-                    print(f"    + {len(frequencies)-1} octave harmonics: {harmonic_ns[1:]}")
             else:
-                print(f"♪ Note ON: MIDI {note} → n={primary_n} [borrowed from MIDI {borrowed.borrowed_midi}]")
-            for i, freq in enumerate(frequencies):
-                print(f"    Voice {i+1}: n={harmonic_ns[i]} @ {freq:.2f} Hz")
+                print(f"♪ Note ON: MIDI {note} → n={primary_n} [borrowed]")
+            
+            # Summary of added layers
+            atmos_count = len([g for g in target_gains[1:] if g == (1.0 - self.harmonic_mix)]) if self.multi_harmonic_enabled else 0
+            nat_count = len([g for g in target_gains[1:] if g == (self.natural_harmonics_level/127.0)]) if self.natural_harmonics_enabled else 0
+            
+            if atmos_count > 0:
+                print(f"    + {atmos_count} Atmosphere voices (Mix: {int((1.0-self.harmonic_mix)*100)}%)")
+            if nat_count > 0:
+                print(f"    + {nat_count} Natural voices (Level: {self.natural_harmonics_level})")
+
             
     def _handle_note_off(self, note: int) -> None:
         """Handle a Note-Off event."""
@@ -661,6 +670,30 @@ class HarmonicBeacon:
         if self.verbose:
             mix_pct = int(self.harmonic_mix * 100)
             print(f"🎚️ Harmonic Mix: {mix_pct}%")
+            
+    def _handle_natural_harmonics_toggle(self, cc_value: int) -> None:
+        """Handle Natural Harmonics Mode toggle (CC30).
+        
+        Args:
+            cc_value: CC value (>=64 is ON)
+        """
+        enabled = cc_value >= 64
+        if enabled != self.natural_harmonics_enabled:
+            self.natural_harmonics_enabled = enabled
+            if self.verbose:
+                state = "ON ✓" if enabled else "OFF ✗"
+                print(f"🎹 Natural Harmonics: {state}")
+                
+    def _handle_natural_level_change(self, cc_value: int) -> None:
+        """Handle Natural Harmonics Level slider (CC92).
+        
+        Args:
+            cc_value: CC value (0-127)
+        """
+        self.natural_harmonics_level = cc_value
+        if self.verbose:
+            print(f"🎚️ Natural Level: {cc_value}")
+
     
     def _update_lfo_chorus(self, dt: float) -> None:
         """Update LFO chorus for all active notes.
@@ -743,6 +776,13 @@ class HarmonicBeacon:
                         
                     elif self.midi.is_harmonic_mix_control(msg):
                         self._handle_harmonic_mix_change(msg.value)
+                        
+                    elif self.midi.is_natural_harmonics_toggle(msg):
+                        self._handle_natural_harmonics_toggle(msg.value)
+                        
+                    elif self.midi.is_natural_level_control(msg):
+                        self._handle_natural_level_change(msg.value)
+
                 
                 # Poll secondary controller for modulation notes
                 if self.secondary_midi is not None:
