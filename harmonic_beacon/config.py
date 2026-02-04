@@ -10,7 +10,7 @@ DEFAULT_F1 = 65.0
 
 # Range for f₁ modulation via MIDI CC (in Hz)
 F1_MIN = 32.5   # A0
-F1_MAX = 260.0  # A3
+F1_MAX = 65.0   # A1 (Reduced range)
 
 # Smoothing rate for f₁ interpolation (0.0 to 1.0)
 # Lower = smoother but slower response
@@ -42,7 +42,7 @@ MIDI_PORT_PATTERN = "Launchpad"
 SECONDARY_MIDI_PORT_PATTERN = "Minilab"
 
 # CC number for f₁ modulation (mod wheel = 1, common slider = 74)
-F1_CC_NUMBER = 1
+F1_CC_NUMBER = 74
 
 # CC number for tolerance slider (KeyLab slider 1 = CC67)
 # Maps 1-127 to TOLERANCE_MIN-TOLERANCE_MAX cents
@@ -127,6 +127,11 @@ PAD_FEEDBACK_COLOR_ON = 60     # Launchpad Green (60=Green High)
 
 # Mapping Type: "LINEAR" (Sequential) or "LAUNCHPAD" (Row Stride 16)
 PAD_MAP_TYPE = "LAUNCHPAD"
+
+# Split Mode Configuration
+SPLIT_MODE_ENABLED_BY_DEFAULT = False
+SPLIT_MODE_TOGGLE_CC = 104  # Arrow Up / Top Button 1
+PAD_FEEDBACK_COLOR_TOGGLE_ON = 21 # Orange (Low Velocity or Specific Color)
 
 # =============================================================================
 # Voice Management

@@ -141,6 +141,8 @@ class HarmonicBeacon:
         
         # Pad Mode (Akai Force)
         self.pad_mode_enabled = config.PAD_MODE_ENABLED_BY_DEFAULT
+        self.split_mode_enabled = config.SPLIT_MODE_ENABLED_BY_DEFAULT
+        self.toggled_harmonics: set[int] = set() # For Split Mode latching
 
 
         
@@ -267,10 +269,37 @@ class HarmonicBeacon:
             
         # 2. Force clear everything just in case
         self.voices.clear()
+        self.osc.send_all_notes_off()
+        if self.mpe_enabled and self.mpe is not None:
+             self.mpe.send_all_notes_off()
+             
+        # 3. Clear Split Mode Toggles
+        self.toggled_harmonics.clear()
+        
+        # 4. Turn off all lights (Launchpad Reset)
+        if self.pad_mode_enabled:
+            for n in range(128):
+                self.midi.send_message(mido.Message('note_off', note=n, velocity=0, channel=0))
+        self.voices.clear()
         self._note_lfos.clear()
         self.osc.send_all_notes_off()
         if self.mpe_enabled and self.mpe is not None:
             self.mpe.send_all_notes_off()
+
+    def _handle_split_mode_toggle(self, value: int) -> None:
+        """Handle Split Mode Toggle (CC 104)."""
+        if value > 0:
+            self.split_mode_enabled = not self.split_mode_enabled
+            if self.verbose:
+                state = "ON" if self.split_mode_enabled else "OFF"
+                print(f"🎛️ Split Mode: {state}")
+            
+            # Reset state when determining mode
+            self.toggled_harmonics.clear()
+            self.voices.clear()
+            self.osc.send_all_notes_off()
+            if self.mpe:
+                self.mpe.send_all_notes_off()
 
     def _handle_note_on(self, note: int, velocity: int, channel: int = 0) -> None:
         """Handle a Note-On event with tolerance-based harmonic mapping.
@@ -306,6 +335,8 @@ class HarmonicBeacon:
             # Determine Mapping
             layout = getattr(config, 'PAD_MAP_TYPE', 'LINEAR')
             n = 0
+            is_toggle_action = False
+            feedback_color = config.PAD_FEEDBACK_COLOR_ON
             
             if layout == 'LAUNCHPAD':
                 # Launchpad XY Layout (Stride 16)
@@ -314,26 +345,70 @@ class HarmonicBeacon:
                     x = rel % 16
                     y = rel // 16
                     if x < 8 and y < 8:
-                        # Invert Y so harmonic 1 is at Bottom-Left
-                        # Assuming y=0 is Top (since current logic mapped 1 to Top-Left)
+                        # Invert Y so harmonic 1 is at Bottom-Left (Row 0)
                         row_from_bottom = 7 - y
-                        n = 1 + x + (row_from_bottom * 8)
+                        
+                        if self.split_mode_enabled:
+                             if row_from_bottom < 4:
+                                 # Lower Half (Rows 0-3): Momentary 1-32
+                                 n = 1 + x + (row_from_bottom * 8)
+                             else:
+                                 # Upper Half (Rows 4-7): Toggle 1-32
+                                 n = 1 + x + ((row_from_bottom - 4) * 8)
+                                 is_toggle_action = True
+                                 feedback_color = getattr(config, 'PAD_FEEDBACK_COLOR_TOGGLE_ON', 21)
+                        else:
+                             # Full Mode: 1-64
+                             n = 1 + x + (row_from_bottom * 8)
             else:
                 # Linear Mapping (Force/Generic)
                 n = 1 + (note - config.PAD_ANCHOR_NOTE)
             
             # Validity check
             if 1 <= n <= 64:
+                # --- Toggle Logic ---
+                if is_toggle_action:
+                    if n in self.toggled_harmonics:
+                        # Turn OFF Logic
+                        self.toggled_harmonics.discard(n)
+                        if self.verbose:
+                            print(f"🎛️ Pad {note}: Toggle OFF (n={n})")
+                        
+                        # Kill triggers
+                        pair = self.voices.note_off(note)
+                        if pair:
+                            self._note_lfos.pop(note, None)
+                            for i, voice_id in enumerate(pair.voice_ids):
+                                freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
+                                self.osc.send_note_off(voice_id, frequency=freq)
+                                self.osc.broadcast_voice_off(voice_id)
+                            self.osc.broadcast_key_off(note)
+                            if self.mpe_enabled and self.mpe:
+                                for i, voice_id in enumerate(pair.voice_ids):
+                                    freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
+                                    self.mpe.send_note_off(voice_id, frequency=freq)
+                                    
+                        # Turn off light
+                        self.midi.send_message(mido.Message('note_off', note=note, velocity=0, channel=channel))
+                        return
+                    else:
+                        # Turn ON Logic
+                        self.toggled_harmonics.add(n)
+                        if self.verbose:
+                             print(f"🎛️ Pad {note}: Toggle ON (n={n})")
+                        # Fall through to Play Logic
+                
+                # --- Play Logic ---
                 # Direct harmonic mapping
                 self._play_harmonic(note, n, velocity, channel)
-                if self.verbose:
+                if self.verbose and not is_toggle_action:
                     print(f"🎛️ Pad {note}: Harmonic {n} ({n*current_f1:.1f} Hz)")
                 
                 # Feedback: Light up the pad
                 self.midi.send_message(mido.Message(
                     'note_on', 
                     note=note, 
-                    velocity=config.PAD_FEEDBACK_COLOR_ON,
+                    velocity=feedback_color,
                     channel=channel
                 ))
             else:
@@ -530,12 +605,10 @@ class HarmonicBeacon:
         """Handle Note-Off event."""
         # Pad Mode Logic
         if self.pad_mode_enabled:
-            # Turn off pad light (Mirror channel)
-            self.midi.send_message(mido.Message('note_off', note=note, velocity=0, channel=channel))
-            
             # Map pad to harmonic
             layout = getattr(config, 'PAD_MAP_TYPE', 'LINEAR')
             n = 0
+            is_upper_half = False
             
             if layout == 'LAUNCHPAD':
                 rel = note - config.PAD_ANCHOR_NOTE
@@ -545,12 +618,26 @@ class HarmonicBeacon:
                     if x < 8 and y < 8:
                         # Invert Y so harmonic 1 is at Bottom-Left
                         row_from_bottom = 7 - y
-                        n = 1 + x + (row_from_bottom * 8)
+                        if self.split_mode_enabled:
+                            if row_from_bottom < 4:
+                                n = 1 + x + (row_from_bottom * 8)
+                            else:
+                                n = 1 + x + ((row_from_bottom - 4) * 8)
+                                is_upper_half = True
+                        else:
+                             n = 1 + x + (row_from_bottom * 8)
             else:
                 n = 1 + (note - config.PAD_ANCHOR_NOTE)
             
+            # If Split Mode Upper Half (Latching), IGNORE Note Off
+            if is_upper_half:
+                return
+
             # If it was a valid harmonic pad, turn off its voice
             if 1 <= n <= 64:
+                # Turn off pad light (Mirror channel) - ONLY if not latched
+                self.midi.send_message(mido.Message('note_off', note=note, velocity=0, channel=channel))
+                
                 pair = self.voices.note_off(note)
                 if pair is None:
                     return # No voice was active for this note
@@ -948,6 +1035,9 @@ class HarmonicBeacon:
                     elif self.midi.is_panic_cc(msg) and msg.value > 0:
                         self.panic()
 
+                    elif self.midi.is_split_mode_toggle(msg):
+                        self._handle_split_mode_toggle(msg.value)
+
                 
                 # Poll secondary controller for modulation notes
                 if self.secondary_midi is not None:
@@ -955,6 +1045,10 @@ class HarmonicBeacon:
                         if self.secondary_midi.is_note_on(msg):
                             # Modulation note - change anchor without producing sound
                             self._handle_modulation_note(msg.note)
+                        
+                        elif self.secondary_midi.is_f1_control(msg):
+                            self._handle_f1_change(msg.value)
+                            
                         # Note-off from secondary controller is ignored
                 
                 # Sleep to avoid busy-waiting

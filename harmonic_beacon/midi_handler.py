@@ -214,6 +214,10 @@ class MidiHandler:
     def is_panic_cc(self, msg: mido.Message) -> bool:
         """Check if a message is the Panic button CC (e.g. 111)."""
         return msg.type == "control_change" and msg.control == config.PANIC_NOTE
+
+    def is_split_mode_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is Split Mode Toggle (CC 104)."""
+        return msg.type == "control_change" and msg.control == config.SPLIT_MODE_TOGGLE_CC
     
     def parse_note_event(self, msg: mido.Message) -> NoteEvent:
         """Parse a Note-On/Off message into a NoteEvent."""
