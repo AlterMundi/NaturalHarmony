@@ -58,8 +58,28 @@ pip install -r requirements.txt
 python -m harmonic_beacon.main --mock
 
 # Run with real OSC to Surge XT
-python -m harmonic_beacon.main
+python -m harmonic_beacon.main --broadcast --mpe
+
+# Run the 3D Visualizer
+python -m harmonic_visualizer.main --3d
 ```
+
+### Hardware Support
+
+- **Arturia KeyLab 61 MkII** (Keyboard Mode)
+- **Novation Launchpad Mini** (Pad Mode)
+
+### Modes
+
+#### Keyboard Mode
+Maps the 12-semitone octave to specific harmonics based on intervals (see table below).
+
+#### Pad Mode (Launchpad Mini)
+Maps the 8x8 pad grid directly to Harmonics 1-64.
+- **Toggle**: Top-Right Side Button (Note 8).
+- **Panic**: CC 111 or Note 111 (Top Right Side Button on some layouts).
+- **Layout**: Harmonic 1 is at the Bottom-Left.
+- **Feedback**: Pads light up Green (High Velocity) when active.
 
 ### Command Line Options
 

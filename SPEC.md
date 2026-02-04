@@ -38,3 +38,13 @@ A Python-based MIDI middleware that maps a standard 12-key controller to the Nat
 - Use `pyliblo` to send OSC messages to Surge XT.
 - Ensure polyphony is handled by tracking MIDI Note-On/Note-Off IDs.
 - The $f_1$ shift must be smooth (interpolated) to avoid digital clicks in the synth.
+
+### Pad Mode Specification (v1.2)
+- **Controller:** Novation Launchpad Mini (or generic 8x8 Grid).
+- **Mapping:** Direct Linear Mapping of Harmonics 1 to 64.
+- **Grid Layout:** 8x8 Grid.
+  - Bottom-Left Pad = $n=1$.
+  - Top-Right Pad = $n=64$.
+  - Rows increase upwards. $n = 1 + x + (y \times 8)$.
+- **Feedback:** Pads light up to indicate active voices.
+- **Panic Control:** CC 111 or Note 111 clears all voices.
