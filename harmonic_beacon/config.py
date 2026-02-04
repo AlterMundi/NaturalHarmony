@@ -121,7 +121,9 @@ PAD_MODE_TOGGLE_NOTE = 1
 # Anchor Note: The MIDI note number of the Bottom-Left Pad (Pad 1)
 # On Akai Force (Controller Mode), bottom-left is often 110 (or varies by oct shift)
 PAD_ANCHOR_NOTE = 110
-PAD_MODE_ENABLED_BY_DEFAULT = False
+PAD_MODE_ENABLED_BY_DEFAULT = True
+PANIC_NOTE = 95
+PAD_FEEDBACK_COLOR_ON = 3     # Low value (often Red/White on Akai)
 
 # =============================================================================
 # Voice Management

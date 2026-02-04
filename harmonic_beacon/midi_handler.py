@@ -48,16 +48,20 @@ class MidiHandler:
         self,
         port_pattern: Optional[str] = config.MIDI_PORT_PATTERN,
         f1_cc: int = config.F1_CC_NUMBER,
+        debug: bool = False,
     ):
         """Initialize the MIDI handler.
         
         Args:
             port_pattern: Substring to match in port names, or None for first port
             f1_cc: CC number used for f₁ modulation
+            debug: If True, print raw MIDI messages to console
         """
         self.port_pattern = port_pattern
         self.f1_cc = f1_cc
+        self.debug = debug
         self._port: Optional[mido.ports.BaseInput] = None
+        self._output_port: Optional[mido.ports.BaseOutput] = None
         self._port_name: Optional[str] = None
         
     def open(self) -> str:
@@ -91,6 +95,27 @@ class MidiHandler:
         
         self._port = mido.open_input(port_name)
         self._port_name = port_name
+        
+        # Try to open output port with same name for feedback
+        try:
+            output_ports = mido.get_output_names()
+            # Try exact match first
+            if port_name in output_ports:
+                self._output_port = mido.open_output(port_name)
+                if self.debug:
+                    print(f"[MIDI] Opened output port: {port_name}")
+            else:
+                 # Try approximate match
+                 for out_name in output_ports:
+                     if port_name[:-2] in out_name: # Simple heuristic
+                         self._output_port = mido.open_output(out_name)
+                         if self.debug:
+                             print(f"[MIDI] Opened output port (approx): {out_name}")
+                         break
+        except Exception as e:
+            if self.debug:
+                print(f"[MIDI] Could not open output port: {e}")
+                
         return port_name
     
     def close(self) -> None:
@@ -98,6 +123,9 @@ class MidiHandler:
         if self._port is not None:
             self._port.close()
             self._port = None
+        if self._output_port is not None:
+            self._output_port.close()
+            self._output_port = None
             self._port_name = None
     
     def poll(self) -> list[mido.Message]:
@@ -108,7 +136,24 @@ class MidiHandler:
         """
         if self._port is None:
             return []
-        return list(self._port.iter_pending())
+        
+        messages = list(self._port.iter_pending())
+        
+        if self.debug:
+            for msg in messages:
+                print(f"[MIDI IN] {msg}")
+                
+        return messages
+
+    def send_message(self, msg: mido.Message) -> None:
+        """Send a MIDI message to the output port."""
+        if self._output_port:
+            try:
+                self._output_port.send(msg)
+                if self.debug:
+                    print(f"[MIDI OUT] {msg}")
+            except Exception as e:
+                print(f"Error sending MIDI: {e}")
     
     def is_note_on(self, msg: mido.Message) -> bool:
         """Check if a message is a Note-On event.

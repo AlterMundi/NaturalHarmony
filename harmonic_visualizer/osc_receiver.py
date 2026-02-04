@@ -129,4 +129,6 @@ class OscReceiver:
 
     def _handle_pad_mode(self, path: str, args: list) -> None:
         """Handle /beacon/mode/pad message."""
-        self.state.pad_mode_enabled = bool(args[0])
+        enabled = bool(args[0])
+        self.state.pad_mode_enabled = enabled
+        print(f"Visualizer: Switched to Pad Mode: {enabled}")

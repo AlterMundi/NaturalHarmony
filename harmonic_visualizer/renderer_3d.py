@@ -317,8 +317,9 @@ class Renderer3D:
                  w = view_size
                  h = view_size / aspect
                  
-             proj = create_ortho_matrix(-w/2, w/2, -h/2, h/2, -10, 10)
+             proj = create_ortho_matrix(-w/2, w/2, -h/2, h/2, -100, 100)
              self.prog['projection'].write(proj.tobytes())
+             self.prog['view'].write(np.eye(4, dtype='f4').tobytes())
              
              self._render_pad_grid()
              
@@ -792,8 +793,9 @@ class Renderer3D:
             vbo.release()
 
     def _render_pad_grid(self) -> None:
-        """Render 8x8 Pad Mode Grid."""
-        vertices = []
+        """Render 8x8 Pad Mode Grid (Fills and Outlines)."""
+        fill_vertices = []
+        line_vertices = []
         
         # Grid settings - Match Akai Force Layout
         # Bottom-Left is n=1 (x=0, y=0)
@@ -810,17 +812,20 @@ class Renderer3D:
                 n = 1 + x + (8 * y)
                 voice = active_voices.get(n)
                 
+                # --- FILL LOGIC ---
                 if voice:
                     glow = voice.glow * voice.gain
                     t = n / 64.0
-                    r = 0.2 + 0.8 * glow
-                    g = 0.2 + 0.5 * glow * (1-t)
-                    b = 0.4 + 0.6 * t + 0.2 * glow
-                    a = 0.8
+                    # Bright fill
+                    r = 0.2 + 0.6 * glow
+                    g = 0.2 + 0.4 * glow * (1-t)
+                    b = 0.4 + 0.5 * t + 0.2 * glow
+                    a = 0.6 # Slightly transparent fill
                 else:
                     glow = 0.0
-                    r, g, b = 0.1, 0.1, 0.12
-                    a = 0.5
+                    # Dim fill
+                    r, g, b = 0.05, 0.05, 0.06
+                    a = 0.4
 
                 px = grid_start_x + x * cell_size + padding + pad_size/2
                 py = grid_start_y + y * cell_size + padding + pad_size/2
@@ -836,10 +841,50 @@ class Renderer3D:
                 ]
                 
                 for pos in corners:
-                    vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
+                    fill_vertices.extend([pos[0], pos[1], pos[2], r, g, b, a, glow])
+
+        
+        # --- OUTLINE LOGIC ---
+                if voice:
+                     # Active Outline: Glows with pressure
+                     line_glow = min(1.0, glow * 1.5)
+                     lr, lg, lb = 0.8, 0.9, 1.0
+                     la = 0.8 + 0.2 * line_glow
+                     lglow = line_glow
+                     lz = 0.01 # Slightly above
+                else:
+                     # Inactive Outline: Dim
+                     lr, lg, lb = 0.2, 0.2, 0.3
+                     la = 0.3
+                     lglow = 0.0
+                     lz = 0.01
                 
-        if vertices:
-            vertices = np.array(vertices, dtype='f4')
+                # Line Strip (Quad Loop)
+                line_corners = [
+                    (px - half, py - half, lz),
+                    (px + half, py - half, lz),
+                    (px + half, py + half, lz),
+                    (px - half, py + half, lz),
+                    (px - half, py - half, lz), # Close loop logic not needed if using GL_LINES for segments
+                ]
+                
+                # Lines: TL-TR, TR-BR, BR-BL, BL-TL
+                segments = [
+                    (line_corners[0], line_corners[1]),
+                    (line_corners[1], line_corners[2]),
+                    (line_corners[2], line_corners[3]),
+                    (line_corners[3], line_corners[0]),
+                ]
+                
+                for start, end in segments:
+                    # Start Point
+                    line_vertices.extend([start[0], start[1], start[2], lr, lg, lb, la, lglow])
+                    # End Point
+                    line_vertices.extend([end[0], end[1], end[2], lr, lg, lb, la, lglow])
+
+        # Render Fills
+        if fill_vertices:
+            vertices = np.array(fill_vertices, dtype='f4')
             vbo = self.ctx.buffer(vertices.tobytes())
             vao = self.ctx.vertex_array(
                 self.prog,
@@ -847,6 +892,24 @@ class Renderer3D:
             )
             vao.render(moderngl.TRIANGLES)
             vbo.release()
+            
+        # Render Outlines
+        if line_vertices:
+            vertices = np.array(line_vertices, dtype='f4')
+            vbo = self.ctx.buffer(vertices.tobytes())
+            vao = self.ctx.vertex_array(
+                self.prog,
+                [(vbo, '3f 4f 1f', 'in_position', 'in_color', 'in_glow')]
+            )
+            vao.render(moderngl.LINES)
+            vbo.release()
+            
+        if fill_vertices:
+           # Throttled print? No, render is frequent.
+           # But let's print anyway to confirm geometry exists.
+           # Just print length.
+           # print(f"DEBUG: Grid Vertices: {len(fill_vertices)} ({len(fill_vertices)//48} pads)")
+           pass
 
     def _render_pad_labels_overlay(self) -> None:
         """Render text labels for pads onto a separate HUD pass."""

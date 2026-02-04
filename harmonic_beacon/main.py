@@ -11,6 +11,8 @@ import sys
 import time
 from typing import Optional
 
+import mido # MIDI support
+
 from . import config
 from .harmonics import (
     beacon_frequency,
@@ -102,6 +104,7 @@ class HarmonicBeacon:
         mock_mpe: bool = False,
         modulation_port_pattern: Optional[str] = config.SECONDARY_MIDI_PORT_PATTERN,
         verbose: bool = True,
+        midi_debug: bool = False,
     ):
         """Initialize The Harmonic Beacon.
         
@@ -112,6 +115,7 @@ class HarmonicBeacon:
             mock_mpe: If True, use MockMpeSender for testing
             modulation_port_pattern: Pattern to match secondary MIDI controller name
             verbose: If True, print status messages
+            midi_debug: If True, print all incoming MIDI messages
         """
         self.verbose = verbose
         self.running = False
@@ -145,13 +149,13 @@ class HarmonicBeacon:
         self._last_update_time = time.time()
         
         # Initialize components
-        self.midi = MidiHandler()
+        self.midi = MidiHandler(debug=midi_debug)
         
         # Secondary MIDI controller for modulation (optional)
         self.modulation_port_pattern = modulation_port_pattern
         self.secondary_midi: Optional[MidiHandler] = None
         if modulation_port_pattern:
-            self.secondary_midi = MidiHandler(port_pattern=modulation_port_pattern)
+            self.secondary_midi = MidiHandler(port_pattern=modulation_port_pattern, debug=midi_debug)
         self.osc: OscSender = MockOscSender(verbose=verbose) if mock_osc else OscSender(broadcast=broadcast)
         self.voices = VoiceTracker()
         self.f1 = F1Modulator()
@@ -229,7 +233,46 @@ class HarmonicBeacon:
         
         if self.verbose:
             print("\n✓ The Harmonic Beacon has stopped.")
-    def _handle_note_on(self, note: int, velocity: int) -> None:
+
+    def _play_harmonic(self, midi_note: int, harmonic_n: int, velocity: int, channel: int = 0) -> None:
+        """Helper to play a single harmonic (used by Pad Mode)."""
+        current_f1 = self.f1.value
+        frequency = current_f1 * harmonic_n
+        
+        voice_ids = self.voices.note_on(
+            midi_note, velocity,
+            frequencies=[frequency],
+            harmonic_ns=[harmonic_n],
+            original_f1=current_f1
+        )
+        
+        if voice_ids:
+            vid = voice_ids[0]
+            vel_norm = velocity / 127.0
+            self.osc.send_note_on(vid, frequency, vel_norm)
+            self.osc.broadcast_voice_on(vid, frequency, vel_norm, midi_note, harmonic_n)
+        
+        if self.mpe_enabled and self.mpe is not None and voice_ids:
+            self.mpe.send_note_on(voice_ids[0], frequency, vel_norm)
+
+    def panic(self) -> None:
+        """Kill all active notes and reset state (Panic)."""
+        if self.verbose:
+            print("\n🚨 PANIC! Stopping all notes. 🚨\n")
+            
+        # 1. Stop all tracked voices
+        active_notes = list(self.voices.get_active_notes().keys())
+        for note in active_notes:
+            self._handle_note_off(note)
+            
+        # 2. Force clear everything just in case
+        self.voices.clear()
+        self._note_lfos.clear()
+        self.osc.send_all_notes_off()
+        if self.mpe_enabled and self.mpe is not None:
+            self.mpe.send_all_notes_off()
+
+    def _handle_note_on(self, note: int, velocity: int, channel: int = 0) -> None:
         """Handle a Note-On event with tolerance-based harmonic mapping.
         
         Supports two modes:
@@ -237,6 +280,11 @@ class HarmonicBeacon:
         2. Keyboard Mode: Standard tolerance-based mapping with Atmosphere/Natural layers.
         """
         current_f1 = self.f1.value
+        
+        # --- Check for Panic ---
+        if note == config.PANIC_NOTE:
+            self.panic()
+            return
         
         # --- Check for Mode Toggle ---
         if note == config.PAD_MODE_TOGGLE_NOTE:
@@ -314,46 +362,25 @@ class HarmonicBeacon:
             n = 1 + x + (y * 8)
             
             # Validity check
-            if n < 1 or n > 64:
-                # Pad out of range (or pressed button outside grid)
+            if 1 <= n <= 64:
+                # Direct harmonic mapping
+                self._play_harmonic(note, n, velocity, channel)
                 if self.verbose:
-                     # print(f"Ignored Note {note} (Computed n={n})")
-                     pass
-                return
+                    print(f"🎛️ Pad {note}: Harmonic {n} ({n*self.f1.value:.1f} Hz)")
                 
-            frequency = current_f1 * n
-            
-            # Allocate Voice
-            # In Pad Mode, we treat everything as partials of the fundamental.
-            # Voices need unique IDs. VoiceTracker handles this by Note Number.
-            # But here, multiple pads could be pressed.
-            # We map MIDI note -> Voice.
-            # VoiceTracker.note_on expects frequencies list.
-            
-            voice_ids = self.voices.note_on(
-                note, velocity,
-                frequencies=[frequency],
-                harmonic_ns=[n],
-                original_f1=current_f1
-            )
-            
-            # Send to OSC
-            # Simple 1-to-1 mapping
-            if voice_ids:
-                 vid = voice_ids[0]
-                 vel_norm = velocity / 127.0
-                 self.osc.send_note_on(vid, frequency, vel_norm)
-                 self.osc.broadcast_voice_on(vid, frequency, vel_norm, note, n)
-            
-            # MPE
-            if self.mpe_enabled and self.mpe is not None and voice_ids:
-                 self.mpe.send_note_on(voice_ids[0], frequency, vel_norm)
-            
-            if self.verbose:
-                 print(f"🎛️ Pad {n} (Grid {x},{y}) → {frequency:.1f} Hz")
-            
+                # Feedback: Light up the pad
+                # Force pads on Channel 9 (MIDI 10). Mirror input channel.
+                self.midi.send_message(mido.Message(
+                    'note_on', 
+                    note=note, 
+                    velocity=config.PAD_FEEDBACK_COLOR_ON,
+                    channel=channel
+                ))
+            else:
+                if self.verbose:
+                    print(f"🎛️ Pad {note}: Out of range (n={n})")
             return
-
+        
         # =========================================================================
         # MODE 2: KEYBOARD MODE (Standard)
         # =========================================================================
@@ -539,8 +566,47 @@ class HarmonicBeacon:
                 print(f"    + {nat_count} Natural voices (Level: {self.natural_harmonics_level})")
 
             
-    def _handle_note_off(self, note: int) -> None:
-        """Handle a Note-Off event."""
+    def _handle_note_off(self, note: int, channel: int = 0) -> None:
+        """Handle Note-Off event."""
+        # Pad Mode Logic
+        if self.pad_mode_enabled:
+            # Turn off pad light (Mirror channel)
+            self.midi.send_message(mido.Message('note_off', note=note, velocity=0, channel=channel))
+            
+            # Map pad to harmonic
+            x = (note - config.PAD_ANCHOR_NOTE) % 8
+            y = (config.PAD_ANCHOR_NOTE + x - note) // 8
+            n = 1 + x + 8*y
+            
+            # If it was a valid harmonic pad, turn off its voice
+            if 1 <= n <= 64:
+                pair = self.voices.note_off(note)
+                if pair is None:
+                    return # No voice was active for this note
+                
+                # Clean up LFO for this note
+                self._note_lfos.pop(note, None)
+                
+                # === Send to OSC ===
+                for i, voice_id in enumerate(pair.voice_ids):
+                    freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
+                    self.osc.send_note_off(voice_id, frequency=freq)
+                    self.osc.broadcast_voice_off(voice_id)
+                
+                # Broadcast key off
+                self.osc.broadcast_key_off(note)
+                
+                # === Send to MPE ===
+                if self.mpe_enabled and self.mpe is not None:
+                    for i, voice_id in enumerate(pair.voice_ids):
+                        freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
+                        self.mpe.send_note_off(voice_id, frequency=freq)
+                
+                if self.verbose:
+                    print(f"♫ Pad OFF: MIDI {note} ({len(pair.voice_ids)} voices)")
+            return # Handled pad mode note off
+        
+        # Keyboard Mode Logic
         pair = self.voices.note_off(note)
         if pair is None:
             return
@@ -873,10 +939,10 @@ class HarmonicBeacon:
                 # Process MIDI messages
                 for msg in self.midi.poll():
                     if self.midi.is_note_on(msg):
-                        self._handle_note_on(msg.note, msg.velocity)
+                        self._handle_note_on(msg.note, msg.velocity, msg.channel)
                         
                     elif self.midi.is_note_off(msg):
-                        self._handle_note_off(msg.note)
+                        self._handle_note_off(msg.note, msg.channel)
                         
                     elif self.midi.is_f1_control(msg):
                         self._handle_f1_change(msg.value)
@@ -979,6 +1045,11 @@ def main() -> None:
         action="store_true",
         help="Disable secondary MIDI controller for modulation",
     )
+    parser.add_argument(
+        "--midi-debug",
+        action="store_true",
+        help="Enable detailed MIDI input/output logging",
+    )
     
     args = parser.parse_args()
     
@@ -1003,6 +1074,7 @@ def main() -> None:
         mock_mpe=args.mock_mpe,
         modulation_port_pattern=modulation_port,
         verbose=not args.quiet,
+        midi_debug=args.midi_debug,
     )
     beacon.f1.value = args.f1
     beacon.f1.target = args.f1

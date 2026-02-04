@@ -17,7 +17,7 @@ KEYBOARD_TRANSPOSE_RANGE = 3  # ±3 octaves
 
 # Display settings
 FULLSCREEN_DEFAULT = True  # Start in fullscreen mode
-SHOW_HUD_DEFAULT = True    # Show numeric values overlay
+SHOW_HUD_DEFAULT = False    # Show numeric values overlay
 
 # Colors (RGB)
 COLOR_BACKGROUND = (15, 15, 25)
