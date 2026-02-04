@@ -290,7 +290,7 @@ class HarmonicBeacon:
         if note == config.PAD_MODE_TOGGLE_NOTE:
             self.pad_mode_enabled = not self.pad_mode_enabled
             if self.verbose:
-                state = "PAD MODE (Akai Force)" if self.pad_mode_enabled else "KEYBOARD MODE"
+                state = "PAD MODE" if self.pad_mode_enabled else "KEYBOARD MODE"
                 print(f"\n🎛️ Switched to: {state}\n")
             
             # Broadcast state to visualizer
@@ -303,73 +303,33 @@ class HarmonicBeacon:
         # MODE 1: PAD MODE (Direct Harmonic Mapping)
         # =========================================================================
         if self.pad_mode_enabled:
-            # Map Akai Force pads to harmonic index n
-            # Force Layout (Key mode, or custom logic derived from user input):
-            # Bottom Left (110) = n=1
-            # Next Right (111) = n=2
-            # Row above (note - 8) logic?
-            # User Input: BottomLeft=110, Right=111, TopRight=61.
-            # 8 rows of 8 pads? 64 pads total.
-            # 110, 111... 117 (Row 1)
-            # Row 2 (Above)? Note 110 -> TopRight 61 implies decreasing notes going UP.
-            # Let's check the math:
-            # If Bottom Left = 110.
-            # If Top Right = 61.
-            # 110 -> 61 is decreasing.
-            # If rows are 8 pads wide.
-            # User observed: Left=110, Right=111. So x increases with note.
-            # So Rows must jump DOWN in note value?
-            # Difference between rows?
-            # If Top Right is 61.
-            # Let's assume standard grid 8x8.
-            # Row 1 (Bottom): 110 ... 117?
-            # Row 8 (Top): ... 61?
-            # 117 - 61 = 56?
-            # 56 / 7 intervals = 8.
-            # So each row UP subtracts 8 from the start?
-            # Let's test:
-            # Row 1: 110, 111, ..., 117
-            # Row 2: 102, 103, ..., 109
-            # ...
-            # Row 8: 54, ..., 61.
-            # Wait, 54 + 7 = 61.
-            # So the logic holds: Notes decrease by 8 per row UP.
+            # Determine Mapping
+            layout = getattr(config, 'PAD_MAP_TYPE', 'LINEAR')
+            n = 0
             
-            # Mapping Formula:
-            # Relative Note = Note - 110 is wrong if notes decrease.
-            # Let's calculate coordinates (x, y) where x=0..7 (col), y=0..7 (row from bottom).
-            # We know: Note increases by 1 for x+1.
-            # Note decreases by 8 for y+1.
-            # note = Anchor + x - 8*y
-            # We want n = 1 + x + 8*y
-            # Solved for x, y?
-            # x = (note - Anchor) % 8 ?
-            # If Anchor=110. Note=110 -> Remainder?
-            # Note 102 (Row 2, col 1): 102 - 110 = -8. -8 % 8 = 0. Correct.
-            # Note 111 (Row 1, col 2): 111 - 110 = 1. 1 % 8 = 1. Correct.
-            # So x = (note - Anchor) % 8
-            # Now y:
-            # note = Anchor + x - 8*y
-            # 8*y = Anchor + x - note
-            # y = (Anchor + x - note) / 8
-            
-            anchor = config.PAD_ANCHOR_NOTE
-            x = (note - anchor) % 8
-            y = (anchor + x - note) // 8
-            
-            # Calculate harmonic number (1-indexed)
-            # n = 1 + x + (y * 8)
-            n = 1 + x + (y * 8)
+            if layout == 'LAUNCHPAD':
+                # Launchpad XY Layout (Stride 16)
+                rel = note - config.PAD_ANCHOR_NOTE
+                if rel >= 0:
+                    x = rel % 16
+                    y = rel // 16
+                    if x < 8 and y < 8:
+                        # Invert Y so harmonic 1 is at Bottom-Left
+                        # Assuming y=0 is Top (since current logic mapped 1 to Top-Left)
+                        row_from_bottom = 7 - y
+                        n = 1 + x + (row_from_bottom * 8)
+            else:
+                # Linear Mapping (Force/Generic)
+                n = 1 + (note - config.PAD_ANCHOR_NOTE)
             
             # Validity check
             if 1 <= n <= 64:
                 # Direct harmonic mapping
                 self._play_harmonic(note, n, velocity, channel)
                 if self.verbose:
-                    print(f"🎛️ Pad {note}: Harmonic {n} ({n*self.f1.value:.1f} Hz)")
+                    print(f"🎛️ Pad {note}: Harmonic {n} ({n*current_f1:.1f} Hz)")
                 
                 # Feedback: Light up the pad
-                # Force pads on Channel 9 (MIDI 10). Mirror input channel.
                 self.midi.send_message(mido.Message(
                     'note_on', 
                     note=note, 
@@ -378,7 +338,7 @@ class HarmonicBeacon:
                 ))
             else:
                 if self.verbose:
-                    print(f"🎛️ Pad {note}: Out of range (n={n})")
+                    print(f"🎛️ Pad {note}: Ignored (n={n})")
             return
         
         # =========================================================================
@@ -574,9 +534,20 @@ class HarmonicBeacon:
             self.midi.send_message(mido.Message('note_off', note=note, velocity=0, channel=channel))
             
             # Map pad to harmonic
-            x = (note - config.PAD_ANCHOR_NOTE) % 8
-            y = (config.PAD_ANCHOR_NOTE + x - note) // 8
-            n = 1 + x + 8*y
+            layout = getattr(config, 'PAD_MAP_TYPE', 'LINEAR')
+            n = 0
+            
+            if layout == 'LAUNCHPAD':
+                rel = note - config.PAD_ANCHOR_NOTE
+                if rel >= 0:
+                    x = rel % 16
+                    y = rel // 16
+                    if x < 8 and y < 8:
+                        # Invert Y so harmonic 1 is at Bottom-Left
+                        row_from_bottom = 7 - y
+                        n = 1 + x + (row_from_bottom * 8)
+            else:
+                n = 1 + (note - config.PAD_ANCHOR_NOTE)
             
             # If it was a valid harmonic pad, turn off its voice
             if 1 <= n <= 64:

@@ -35,7 +35,7 @@ HIGHEST_MIDI_NOTE = 108 # C8
 
 # Pattern to match MIDI input port name (case-insensitive substring match)
 # Set to None to use the first available port
-MIDI_PORT_PATTERN = "Force"
+MIDI_PORT_PATTERN = "Launchpad"
 
 # Secondary controller for modulation (e.g., Minilab3)
 # Notes on this controller trigger modulation without producing sound
@@ -115,15 +115,18 @@ OSC_PARAMETER = "/surge/param"
 # =============================================================================
 
 # Toggle Note for Pad Mode (Button/Note used to switch modes)
-# Note 1 = A specific button on Force
-PAD_MODE_TOGGLE_NOTE = 1
+# Launchpad Side Button 1 (Note 8) is a good toggle if grid is 0-7
+PAD_MODE_TOGGLE_NOTE = 8
 
 # Anchor Note: The MIDI note number of the Bottom-Left Pad (Pad 1)
-# On Akai Force (Controller Mode), bottom-left is often 110 (or varies by oct shift)
-PAD_ANCHOR_NOTE = 110
+# Launchpad Programmer Mode starts at 0
+PAD_ANCHOR_NOTE = 0
 PAD_MODE_ENABLED_BY_DEFAULT = True
-PANIC_NOTE = 95
-PAD_FEEDBACK_COLOR_ON = 3     # Low value (often Red/White on Akai)
+PANIC_NOTE = 111
+PAD_FEEDBACK_COLOR_ON = 60     # Launchpad Green (60=Green High)
+
+# Mapping Type: "LINEAR" (Sequential) or "LAUNCHPAD" (Row Stride 16)
+PAD_MAP_TYPE = "LAUNCHPAD"
 
 # =============================================================================
 # Voice Management
