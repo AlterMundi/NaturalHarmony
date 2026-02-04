@@ -265,28 +265,65 @@ class HarmonicBeacon:
             # The source note is note + (12 * octaves_borrowed)
             check_note = note + (12 * borrowed.octaves_borrowed)
             
-        # Multi-harmonic mode: check higher octaves for matches
+        # Multi-harmonic mode: Spectral Folding (Atmosphere)
         if self.multi_harmonic_enabled:
-            # For borrowed keys, we want to play the source harmonic first
-            # Logic: check_note is set correctly above for both cases
+            # We want to find harmonies from the upper series and fold them down
+            # to the played octave to create a cluster.
             
+            # Use a Set for deduplication of frequencies (avoid phase issues)
+            # Add primary frequency first (rounded for comparison)
+            existing_freqs = {round(frequencies[0], 2)}
+            
+            # Scan upwards through octaves
+            octaves_scanned = 0
             while len(frequencies) < self.max_harmonics and check_note <= 108:
-                # Get match for this octave
-                octave_match = self._key_mapper.get_match(check_note)
+                # Use get_all_matches to capture every valid harmonic in the octave
+                octave_matches = self._key_mapper.get_all_matches(check_note)
                 
-                # If we have a match, add it
-                # For borrowed keys, the first check_note IS the source match, so it will be found here
-                if octave_match:
-                    freq = current_f1 * octave_match.harmonic_n
-                    # Avoid duplicates if source happened to qualify as primary (unlikely for borrowed)
-                    # But for borrowed, the primary voice is transposed, this one is pure.
-                    # So we process it.
+                # Calculate how many octaves down we need to transpose
+                # For direct match: check_note = note + 12*k -> transpose down k
+                # For borrowed: check_note starts at source. Source is transposed down 'borrowed.octaves_borrowed'.
+                # Each subsequent check_note is +1 octave relative to previous.
+                
+                # Simplest way: transpose down to the target range of the primary freq.
+                # Target range is approx 'current_f1 * match.harmonic_n / 2**k'
+                # We want result ~ frequencies[0]
+                
+                for match in octave_matches:
+                    if len(frequencies) >= self.max_harmonics:
+                        break
+                        
+                    raw_freq = current_f1 * match.harmonic_n
                     
-                    if freq <= 20000:  # Stay within hearing range
-                        frequencies.append(freq)
-                        harmonic_ns.append(octave_match.harmonic_n)
+                    # Determine fold factor
+                    # We want the freq to be in the same octave as frequencies[0]
+                    # So we divide by 2 until it is within [freq[0]/1.5, freq[0]*1.5] roughly?
+                    # Or simpler: we know exactly how many octaves above 'note' 'check_note' is.
+                    # distance_semitones = check_note - note
+                    # octaves_diff = distance_semitones / 12 (approx, borrowed might be offset)
+                    # Actually, borrowed keys might not be octaves aligned if anchor is unusual?
+                    # But get_all_matches searches MIDI keys.
+                    # MIDI keys are semitones. 12 semitones = 1 octave? 
+                    # KeyMapper maps keys to Harmonics.
+                    # If I play D4, and check D5. D5 is 12 semitones up.
+                    # If I find a match at D5, its frequency is naturally ~2x D4.
+                    # So I should divide by 2.
+                    # If I check D6 (24 semitones), divide by 4.
+                    
+                    # Calculate octave difference from the PLAYED note
+                    semitone_diff = check_note - note
+                    fold_octaves = round(semitone_diff / 12)
+                    
+                    folded_freq = raw_freq / (2 ** fold_octaves)
+                    
+                    # Deduplicate
+                    if round(folded_freq, 2) not in existing_freqs:
+                        frequencies.append(folded_freq)
+                        harmonic_ns.append(match.harmonic_n)
+                        existing_freqs.add(round(folded_freq, 2))
                 
                 check_note += 12
+                octaves_scanned += 1
         
         # Set up LFO
         lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)

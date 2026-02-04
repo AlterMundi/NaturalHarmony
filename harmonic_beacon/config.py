@@ -6,11 +6,11 @@
 
 # Default fundamental frequency (f₁) in Hz
 # 54 Hz is approximately between A1 and Bb1
-DEFAULT_F1 = 54.0
+DEFAULT_F1 = 65.0
 
 # Range for f₁ modulation via MIDI CC (in Hz)
-F1_MIN = 27.5   # A0
-F1_MAX = 220.0  # A3
+F1_MIN = 32.5   # A0
+F1_MAX = 260.0  # A3
 
 # Smoothing rate for f₁ interpolation (0.0 to 1.0)
 # Lower = smoother but slower response
@@ -80,7 +80,8 @@ PRIMARY_LOCK_CC = 28
 HARMONIC_MIX_CC = 89
 
 # Maximum harmonic to search when finding matches
-MAX_HARMONIC = 128
+# Increased to 4096 to ensure full 20kHz coverage even for low f1 (e.g. 5Hz)
+MAX_HARMONIC = 4096
 
 # =============================================================================
 # OSC Configuration (Surge XT)
