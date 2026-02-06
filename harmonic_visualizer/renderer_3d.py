@@ -399,8 +399,12 @@ class Renderer3D:
                 # shift = log2(ratio)
                 if self.state.f1 > 0:
                     pure_freq = self.state.f1 * n
-                    ratio = v.frequency / pure_freq
-                    shift = math.log2(ratio) if ratio > 0 else 0
+                    # Avoid division by zero if n is 0 or very small
+                    if abs(pure_freq) > 0.001:
+                        ratio = v.frequency / pure_freq
+                        shift = math.log2(ratio) if ratio > 0 else 0
+                    else:
+                        shift = 0
                 else:
                     shift = 0
                 

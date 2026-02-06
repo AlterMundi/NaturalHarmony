@@ -16,7 +16,7 @@ KEYBOARD_LOWEST_NOTE = 0  # Full MIDI range
 KEYBOARD_TRANSPOSE_RANGE = 3  # ±3 octaves
 
 # Display settings
-FULLSCREEN_DEFAULT = True  # Start in fullscreen mode
+FULLSCREEN_DEFAULT = False  # Start in windowed mode
 SHOW_HUD_DEFAULT = False    # Show numeric values overlay
 
 # Colors (RGB)

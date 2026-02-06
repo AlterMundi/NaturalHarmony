@@ -173,23 +173,26 @@ class KeyMapper:
                 source_type = 'prototype'
                 
                 # Physical n of the transposed frequency
-                # transposed_f = f1 * proto_n * 2^k = f1 * (proto_n * 2^k)
-                # So physical n is proto_n * 2^k
-                # Note: 2^k might be fractional if k is negative? No, octaves are ints.
-                # But if num_octaves is negative, we are diving n. 
-                # Harmonics must be integers? 
-                # If we transpose DOWN, we might get non-integer harmonic relative to f1.
-                # E.g. f1=100. Prototype n=3 (300Hz). Key is 150Hz.
-                # We need 150Hz. That is f1 * 1.5. Not a harmonic.
-                # "Optimized Chromatic Scale" implies we treat these as valid pitches.
-                # But are they "Harmonics"? No. They are "Transposed Harmonics".
-                # The user said: "play the origin frequency together with the octave-transposed one".
-                # So we are allowed to play non-harmonics (transposed) as the primary voice?
-                # "Use these tunings for any key... optimized for closeness... derived from direct harmonics"
-                # Yes, "derived implies transposition".
-                # So Primary N might not be an integer. That's fine for frequency calc, 
-                # but might confuse visualizers asking for "Harmonic N".
-                # We will store the effective multiplier.
+                # transposed_f = f1 * proto_n * 2^k
+                # We calculate the effective "n" relative to f1.
+                # It might be non-integer if we transposed DOWN (k < 0), 
+                # but valid for visualizer ratio calc.
+                # However, visualizer expects n to be the harmonic index.
+                # If we send n=3.0, it should be fine if visualizer handles float n.
+                # Wait, Main.py sends int? "harmonic_ns: list[int]"
+                # If we cast to int, we lose precision if transposed down?
+                # But usually we transpose UP to match keys.
+                # If we transpose down, e.g. proto=3, octave=-1 => 1.5. Not a harmonic.
+                # But user asked for "origin frequency together with octave-transposed".
+                # Primary is the Transposed one.
+                # Let's send the effective scalar as 'n'.
+                # Note: harmonic_ns is type hinted as list[int] in main, but Python is dynamic.
+                # Let's try to keep it integer if possible, or float if needed.
+                effective_n = proto_n * (2 ** num_octaves)
+                
+                # If it happens to be non-integer (transposed down), we might have issues with
+                # visualizers expecting integers. But 0 crashes it.
+                # Let's use the effective_n.
                 
                 secondary_n = proto_n
                 secondary_f = proto_f
@@ -197,7 +200,7 @@ class KeyMapper:
             self._mapping[midi] = KeyMatch(
                 midi_note=midi,
                 primary_freq=primary_f,
-                primary_n=0, # Placeholder, calculated below if possible?
+                primary_n=effective_n, # Now calculating effective N (e.g. 6.0 for 3*2)
                 primary_deviation=deviation,
                 secondary_freq=secondary_f,
                 secondary_n=secondary_n,
