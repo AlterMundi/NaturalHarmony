@@ -336,6 +336,7 @@ class Renderer3D:
             proj = create_ortho_matrix(-half_w, half_w, -2, 2, -10, 10)
             
             self.prog['projection'].write(proj.tobytes())
+            self.prog['view'].write(np.eye(4, dtype='f4').tobytes())
             
             self._render_keyboard()
             self._render_frequency_ruler()
