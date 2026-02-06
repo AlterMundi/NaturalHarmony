@@ -197,41 +197,14 @@ class MidiHandler:
         """Check if a message is the f₁ modulation CC."""
         return msg.type == "control_change" and msg.control == self.f1_cc
     
-    def is_tolerance_control(self, msg: mido.Message) -> bool:
-        """Check if a message is the tolerance CC (CC67)."""
-        return msg.type == "control_change" and msg.control == config.TOLERANCE_CC
+    def is_stacking_mix_control(self, msg: mido.Message) -> bool:
+        """Check if a message is the Stacking Mix CC (CC67)."""
+        return msg.type == "control_change" and msg.control == config.STACKING_MIX_CC
+
+    def is_stacking_mode_toggle(self, msg: mido.Message) -> bool:
+        """Check if a message is the Stacking Mode toggle CC (CC22)."""
+        return msg.type == "control_change" and msg.control == config.STACKING_MODE_CC
     
-    def is_lfo_rate_control(self, msg: mido.Message) -> bool:
-        """Check if a message is the LFO rate CC (CC68)."""
-        return msg.type == "control_change" and msg.control == config.LFO_RATE_CC
-    
-    def is_vibrato_mode_toggle(self, msg: mido.Message) -> bool:
-        """Check if a message is the vibrato mode toggle CC (CC23)."""
-        return msg.type == "control_change" and msg.control == config.VIBRATO_MODE_CC
-    
-    def is_multi_harmonic_toggle(self, msg: mido.Message) -> bool:
-        """Check if a message is the multi-harmonic toggle CC (CC29)."""
-        return msg.type == "control_change" and msg.control == config.MULTI_HARMONIC_CC
-    
-    def is_max_harmonics_control(self, msg: mido.Message) -> bool:
-        """Check if a message is the max harmonics CC (CC90)."""
-        return msg.type == "control_change" and msg.control == config.MAX_HARMONICS_CC
-    
-    def is_primary_lock_toggle(self, msg: mido.Message) -> bool:
-        """Check if a message is the primary voice lock CC (CC28)."""
-        return msg.type == "control_change" and msg.control == config.PRIMARY_LOCK_CC
-    
-    def is_harmonic_mix_control(self, msg: mido.Message) -> bool:
-        """Check if a message is the harmonic mix CC (CC89)."""
-        return msg.type == "control_change" and msg.control == config.HARMONIC_MIX_CC
-    
-    def is_natural_harmonics_toggle(self, msg: mido.Message) -> bool:
-        """Check if a message is the Natural Harmonics toggle (CC30)."""
-        return msg.type == "control_change" and msg.control == config.NATURAL_HARMONICS_CC
-    
-    def is_natural_level_control(self, msg: mido.Message) -> bool:
-        """Check if a message is the Natural Harmonics Level control (CC92)."""
-        return msg.type == "control_change" and msg.control == config.NATURAL_LEVEL_CC
 
     def is_panic_cc(self, msg: mido.Message) -> bool:
         """Check if a message is the Panic button CC (e.g. 111)."""

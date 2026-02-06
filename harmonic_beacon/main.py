@@ -19,7 +19,6 @@ from .harmonics import (
     frequency_to_midi_float,
 )
 from .key_mapper import KeyMapper
-from .octave_borrower import OctaveBorrower
 from .lfo import HarmonicLFO, VibratoMode
 from .midi_handler import MidiHandler
 from .osc_sender import OscSender, MockOscSender
@@ -120,24 +119,11 @@ class HarmonicBeacon:
         self.verbose = verbose
         self.running = False
         
-        # Tolerance and LFO settings
-        self.tolerance = config.DEFAULT_TOLERANCE
-        self.lfo_rate = config.DEFAULT_LFO_RATE
-        self.vibrato_mode = VibratoMode.SMOOTH
+        # Stacking Mode (CC22) and Mix (CC67)
+        self.stacking_mode_enabled = False # Toggled by CC22
+        self.stacking_mix = config.DEFAULT_STACKING_MIX
         
-        # Multi-harmonic mode settings (CC29 toggle, CC90 count)
-        self.multi_harmonic_enabled = False  # Toggled by CC29
-        self.max_harmonics = config.DEFAULT_MAX_HARMONICS  # How many octave harmonics to play
-        
-        # Harmonic mix settings (CC28 lock, CC89 mix)
-        self.primary_lock = True  # If True, primary voice is always loud
-        self.harmonic_mix = 0.5   # 0=Secondary Only, 1=Primary Only (if lock OFF)
-        
-        # Natural Harmonics settings (CC30 toggle, CC92 level)
-        self.natural_harmonics_enabled = False # Toggled by CC30
-        # Natural Harmonics settings (CC30 toggle, CC92 level)
-        self.natural_harmonics_enabled = False # Toggled by CC30
-        self.natural_harmonics_level = config.DEFAULT_NATURAL_LEVEL
+
         
         # Pad Mode (Akai Force)
         self.pad_mode_enabled = config.PAD_MODE_ENABLED_BY_DEFAULT
@@ -173,12 +159,7 @@ class HarmonicBeacon:
         self._key_mapper = KeyMapper(
             f1=self.f1.value,
             anchor_midi=config.ANCHOR_MIDI_NOTE,
-            tolerance_cents=self.tolerance,
-            max_harmonic=config.MAX_HARMONIC,
         )
-        
-        # Octave borrower for inactive keys
-        self._borrower = OctaveBorrower(self._key_mapper)
         
     def start(self) -> None:
         """Start the Harmonic Beacon."""
@@ -417,139 +398,63 @@ class HarmonicBeacon:
             return
         
         # =========================================================================
-        # MODE 2: KEYBOARD MODE (Standard)
+        # MODE 2: KEYBOARD MODE (Optimized Chromatic + Stacking)
         # =========================================================================
         
-        # --- 1. Determine Primary Match ---
+        # --- 1. Get Match ---
         match = self._key_mapper.get_match(note)
-        borrowed = None
-        
         if match is None:
-            borrowed = self._borrower.borrow(note)
-            if borrowed is None:
-                if self.verbose:
-                    print(f"♪ Note ON: MIDI {note} → (no harmonic match)")
-                return
-        
-        # Lists to populate
+            if self.verbose:
+                 print(f"♪ Note ON: MIDI {note} → (no match)")
+            return
+
+        # --- 2. Determine Voices ---
         frequencies: list[float] = []
         harmonic_ns: list[int] = []
         target_gains: list[float] = []
         
-        # --- 2. Add Primary Voice ---
-        if match is not None:
-            # Direct match
-            primary_n = match.harmonic_n
-            primary_freq = current_f1 * primary_n
-            
-            frequencies.append(primary_freq)
-            harmonic_ns.append(primary_n)
-            
-            # Start checks from next octave
-            check_note_atmosphere = note + 12
-            check_note_natural = note + 12
-        else:
-            # Borrowed
-            primary_n = borrowed.harmonic_n
-            beacon_freq = current_f1 * primary_n
-            transposed_freq = beacon_freq / (2 ** borrowed.octaves_borrowed)
-            
-            frequencies.append(transposed_freq)
-            harmonic_ns.append(primary_n)
-            
-            # Start checks from source octave
-            source_note = note + (12 * borrowed.octaves_borrowed)
-            check_note_atmosphere = source_note  # For folding, we scan from source
-            check_note_natural = source_note     # For natural, we scan from source
-            # Actually for Natural, if we are playing C3 (borrowed from C4), 
-            # we want natural harmonics of C3? Or C4?
-            # If we play C3, we want to hear the timbre of C3.
-            # But C3 is "fake" (borrowed).
-            # The "Natural" logic scans for matches in *played* key context usually.
-            # But the system knows C4 is the match.
-            # If we scan relative to C3 (check_note_natural = note + 12), we might find C4.
-            # Let's stick to scanning relative to the *played* note for Natural, 
-            # checking if *those* notes have matches.
-            check_note_natural = note + 12
-        
-        # Calculate Primary Gain
-        if self.primary_lock:
-            p_gain = 1.0
-        else:
-            p_gain = self.harmonic_mix
-        target_gains.append(p_gain)
-        
-        # --- 3. Atmosphere (Spectral Folding) ---
-        if self.multi_harmonic_enabled:
-            # Secondary gain (controlled by Harmonic Mix)
-            s_gain = 1.0 - self.harmonic_mix
-            
-            existing_freqs = {round(frequencies[0], 2)}
-            
-            # Use check_note_atmosphere for scanning
-            check_note = check_note_atmosphere
-            
-            while len(frequencies) < self.max_harmonics + 1 and check_note <= 108: # +1 for primary
-                # Get all matches in this octave
-                octave_matches = self._key_mapper.get_all_matches(check_note)
-                
-                for m in octave_matches:
-                    if len(frequencies) >= self.max_harmonics + 1:
-                        break
-                    
-                    raw_freq = current_f1 * m.harmonic_n
-                    
-                    # Fold down to proximity of played note
-                    # Calculate octave difference from PLAYED note
-                    semitone_diff = check_note - note
-                    fold_octaves = round(semitone_diff / 12)
-                    folded_freq = raw_freq / (2 ** fold_octaves)
-                    
-                    if round(folded_freq, 2) not in existing_freqs:
-                        frequencies.append(folded_freq)
-                        harmonic_ns.append(m.harmonic_n)
-                        target_gains.append(s_gain)
-                        existing_freqs.add(round(folded_freq, 2))
-                
-                check_note += 12
+        # Helper to add voice
+        def add_voice(freq, n, gain):
+            frequencies.append(freq)
+            harmonic_ns.append(n)
+            target_gains.append(gain)
 
-        # --- 4. Natural Harmonics (Original Frequencies) ---
-        if self.natural_harmonics_enabled:
-            # Natural gain (controlled by CC92)
-            n_gain = self.natural_harmonics_level / 127.0
-            
-            # Simple scan upwards from the played note
-            # We look for direct matches in higher octaves
-            check_note = check_note_natural
-            
-            # Safety limit: don't go crazy with voices
-            max_natural_voices = 16 
-            natural_count = 0
-            
-            while natural_count < max_natural_voices and check_note <= 108:
-                # Check for match at this specific note
-                nat_match = self._key_mapper.get_match(check_note)
-                
-                if nat_match:
-                    freq = current_f1 * nat_match.harmonic_n
-                    if freq <= 20000:
-                        frequencies.append(freq)
-                        harmonic_ns.append(nat_match.harmonic_n)
-                        target_gains.append(n_gain)
-                        natural_count += 1
-                
-                check_note += 12
+        # Mix calculation (0.0 = Natural, 1.0 = Transposed)
+        # Config: 0=Natural, 127=Transposed
+        mix = self.stacking_mix / 127.0
         
-        # --- 5. Voice Allocation & Setup ---
+        if self.stacking_mode_enabled and match.is_transposed:
+             # Stacked Mode: Play both
+             # Voice 1: Primary (Transposed) - Controlled by Mix
+             add_voice(match.primary_freq, match.primary_n, mix)
+             
+             # Voice 2: Secondary (Natural) - Controlled by Inverse Mix
+             add_voice(match.secondary_freq, match.secondary_n, 1.0 - mix)
+             
+             if self.verbose:
+                 print(f"♪ Note ON: MIDI {note} [STACKED]")
+                 print(f"    Primary: {match.primary_freq:.1f}Hz (Mix={mix:.2f})")
+                 print(f"    Natural: {match.secondary_freq:.1f}Hz (n={match.secondary_n}) (Mix={1.0-mix:.2f})")
+                 
+        else:
+             # Single Voice (Best Fit)
+             # If not transposed, it's a local match, so it's both "Natural" and "Best".
+             # We play it at full volume.
+             add_voice(match.primary_freq, match.primary_n, 1.0)
+             
+             if self.verbose:
+                 sign = '+' if match.primary_deviation >= 0 else ''
+                 src = "Prototype" if match.source_type == 'prototype' else "Local"
+                 print(f"♪ Note ON: MIDI {note} → {match.primary_freq:.1f}Hz ({sign}{match.primary_deviation:.1f}¢) [{src}]")
+
+        # --- 3. Allocate Voices ---
         
-        # Set up LFO (only affects Primary/Atmosphere typically, or all?)
-        # Logic applies "frequencies" to LFO. So it affects all.
-        lfo = HarmonicLFO(rate=self.lfo_rate, mode=self.vibrato_mode)
+        # LFO per note
+        lfo = HarmonicLFO(rate=config.DEFAULT_LFO_RATE, mode=VibratoMode.SMOOTH)
         lfo.set_harmonics(frequencies)
         self._note_lfos[note] = lfo
         
-        # Allocate voices
-        vel_normalized = velocity / 127.0
+        # Tracker
         voice_ids = self.voices.note_on(
             note, velocity,
             frequencies=frequencies,
@@ -557,48 +462,30 @@ class HarmonicBeacon:
             original_f1=current_f1,
         )
             
-        # --- 6. Send to OSC ---
+        # --- 4. Send to OSC ---
+        vel_norm = velocity / 127.0
         for i, voice_id in enumerate(voice_ids):
             freq = frequencies[i]
-            n = harmonic_ns[i]
-            gain_scale = target_gains[i]
+            n = harmonic_ns[i] 
+            gain = target_gains[i]
             
-            voice_vel = vel_normalized * gain_scale
-            
-            # Clamp for minimal activity if intended
-            final_vel = max(0.001, voice_vel) if voice_vel > 0 else 0
-            
-            if final_vel > 0:
+            final_vel = vel_norm * gain
+            if final_vel > 0.001:
                 self.osc.send_note_on(voice_id, freq, final_vel)
                 self.osc.broadcast_voice_on(voice_id, freq, final_vel, note, n)
         
         # Broadcast key
         self.osc.broadcast_key_on(note, velocity)
         
-        # --- 7. Send to MPE ---
+        # --- 5. Send to MPE ---
         if self.mpe_enabled and self.mpe is not None:
-            for i, voice_id in enumerate(voice_ids):
-                gain_scale = target_gains[i]
-                voice_vel = vel_normalized * gain_scale
-                final_vel = max(0.001, voice_vel) if voice_vel > 0 else 0
-                if final_vel > 0:
-                    self.mpe.send_note_on(voice_id, frequencies[i], final_vel)
-        
-        if self.verbose:
-            if match is not None:
-                sign = '+' if match.deviation_cents >= 0 else ''
-                print(f"♪ Note ON: MIDI {note} → n={primary_n} ({sign}{match.deviation_cents:.1f}¢)")
-            else:
-                print(f"♪ Note ON: MIDI {note} → n={primary_n} [borrowed]")
-            
-            # Summary of added layers
-            atmos_count = len([g for g in target_gains[1:] if g == (1.0 - self.harmonic_mix)]) if self.multi_harmonic_enabled else 0
-            nat_count = len([g for g in target_gains[1:] if g == (self.natural_harmonics_level/127.0)]) if self.natural_harmonics_enabled else 0
-            
-            if atmos_count > 0:
-                print(f"    + {atmos_count} Atmosphere voices (Mix: {int((1.0-self.harmonic_mix)*100)}%)")
-            if nat_count > 0:
-                print(f"    + {nat_count} Natural voices (Level: {self.natural_harmonics_level})")
+             for i, voice_id in enumerate(voice_ids):
+                 freq = frequencies[i]
+                 gain = target_gains[i]
+                 final_vel = vel_norm * gain
+                 if final_vel > 0.001:
+                     self.mpe.send_note_on(voice_id, freq, final_vel)
+
 
             
     def _handle_note_off(self, note: int, channel: int = 0) -> None:
@@ -810,138 +697,31 @@ class HarmonicBeacon:
             print(f"⚓ Modulated: {anchor_note}{anchor_octave_num} is now n=1, f₁ = {new_f1:.1f} Hz")
             print(f"    (from MIDI {note}, n={best_n})")
     
-    def _handle_tolerance_change(self, cc_value: int) -> None:
-        """Handle tolerance CC (CC67).
+    def _handle_stacking_mix_change(self, cc_value: int) -> None:
+        """Handle Stacking Mix CC change (CC67).
         
-        Args:
-            cc_value: CC value (1-127) maps to TOLERANCE_MIN-TOLERANCE_MAX
+        Controls the balance between Transposed (Pitch-Correct) and Natural (Spectral) layers
+        in Stacking Mode.
+        0 = Natural Layer Focused
+        127 = Transposed Layer Focused
         """
-        # Map 1-127 to tolerance range (avoid 0 for minimum audible effect)
-        normalized = max(1, cc_value) / 127.0
-        self.tolerance = (
-            config.TOLERANCE_MIN + 
-            normalized * (config.TOLERANCE_MAX - config.TOLERANCE_MIN)
-        )
-        # Rebuild key mapper with new tolerance
-        self._key_mapper.rebuild(tolerance_cents=self.tolerance)
+        self.stacking_mix = cc_value
         if self.verbose:
-            print(f"🎚️ Tolerance: {self.tolerance:.1f}¢")
-        self.osc.broadcast_cc(config.TOLERANCE_CC, cc_value)
-    
-    def _handle_lfo_rate_change(self, cc_value: int) -> None:
-        """Handle LFO rate CC (CC68).
-        
-        Args:
-            cc_value: CC value (0-127) maps to LFO_RATE_MIN-LFO_RATE_MAX
-        """
-        normalized = cc_value / 127.0
-        self.lfo_rate = (
-            config.LFO_RATE_MIN + 
-            normalized * (config.LFO_RATE_MAX - config.LFO_RATE_MIN)
-        )
-        # Update all active LFOs
-        for lfo in self._note_lfos.values():
-            lfo.rate = self.lfo_rate
-        if self.verbose:
-            print(f"🌊 LFO Rate: {self.lfo_rate:.2f} Hz")
-        self.osc.broadcast_cc(config.LFO_RATE_CC, cc_value)
-    
-    def _handle_vibrato_mode_toggle(self, cc_value: int) -> None:
-        """Handle vibrato mode toggle (CC23).
-        
-        Args:
-            cc_value: CC value (0=smooth, 127=stepped)
-        """
-        new_mode = VibratoMode.STEPPED if cc_value >= 64 else VibratoMode.SMOOTH
-        
-        if new_mode != self.vibrato_mode:
-            self.vibrato_mode = new_mode
-            # Update all active LFOs
-            for lfo in self._note_lfos.values():
-                lfo.mode = new_mode
-            if self.verbose:
-                mode_name = "Stepped ▮▮" if new_mode == VibratoMode.STEPPED else "Smooth 〜"
-                print(f"🔄 Vibrato: {mode_name}")
-            self.osc.broadcast_cc(config.VIBRATO_MODE_CC, cc_value)
-    
-    def _handle_multi_harmonic_toggle(self, cc_value: int) -> None:
-        """Handle multi-harmonic mode toggle (CC29).
-        
-        When enabled, plays the same interval at multiple octaves.
-        
-        Args:
-            cc_value: CC value (0=single voice, >=64=multi-harmonic)
-        """
-        enabled = cc_value >= 64
-        if enabled != self.multi_harmonic_enabled:
-            self.multi_harmonic_enabled = enabled
-            if self.verbose:
-                state = "ON ✓" if enabled else "OFF ✗"
-                print(f"🎹 Multi-Harmonic: {state}")
-    
-    def _handle_max_harmonics_change(self, cc_value: int) -> None:
-        """Handle max harmonics CC (CC90).
-        
-        Sets how many octave harmonics to play in multi-harmonic mode.
-        
-        Args:
-            cc_value: CC value (0-127) maps to 1-4 harmonics
-        """
-        # Map 0-127 to 1-4 harmonics
-        self.max_harmonics = 1 + int(cc_value / 127.0 * 3)
-        if self.verbose:
-            print(f"🎚️ Max Harmonics: {self.max_harmonics}")
+             # Calculate percentage
+             pct = int((cc_value / 127.0) * 100)
+             print(f"🎛️ Stacking Mix: {pct}%")
 
-    def _handle_primary_lock_toggle(self, cc_value: int) -> None:
-        """Handle primary voice lock toggle (CC28).
-        
-        Args:
-            cc_value: CC value (>=64 is ON)
-        """
-        enabled = cc_value >= 64
-        if enabled != self.primary_lock:
-            self.primary_lock = enabled
-            if self.verbose:
-                state = "LOCKED 🔒" if enabled else "UNLOCKED 🔓"
-                print(f"⚓ Primary Voice: {state}")
-    
-    def _handle_harmonic_mix_change(self, cc_value: int) -> None:
-        """Handle harmonic mix slider (CC89).
-        
-        Controls balance between Primary (fundamental) and Additional Harmonics.
-        0 (Bottom) = Harmonics Focused
-        127 (Top) = Primary Focused
-        
-        Args:
-            cc_value: CC value (0-127)
-        """
-        self.harmonic_mix = cc_value / 127.0
-        if self.verbose:
-            mix_pct = int(self.harmonic_mix * 100)
-            print(f"🎚️ Harmonic Mix: {mix_pct}%")
-            
-    def _handle_natural_harmonics_toggle(self, cc_value: int) -> None:
-        """Handle Natural Harmonics Mode toggle (CC30).
-        
-        Args:
-            cc_value: CC value (>=64 is ON)
-        """
-        enabled = cc_value >= 64
-        if enabled != self.natural_harmonics_enabled:
-            self.natural_harmonics_enabled = enabled
-            if self.verbose:
-                state = "ON ✓" if enabled else "OFF ✗"
-                print(f"🎹 Natural Harmonics: {state}")
-                
-    def _handle_natural_level_change(self, cc_value: int) -> None:
-        """Handle Natural Harmonics Level slider (CC92).
-        
-        Args:
-            cc_value: CC value (0-127)
-        """
-        self.natural_harmonics_level = cc_value
-        if self.verbose:
-            print(f"🎚️ Natural Level: {cc_value}")
+    def _handle_stacking_mode_toggle(self, cc_value: int) -> None:
+         """Handle Stacking Mode Toggle (CC22).
+         
+         When ON, plays both Transposed (Primary) and Natural (Secondary) frequencies.
+         """
+         new_state = cc_value >= 64
+         if new_state != self.stacking_mode_enabled:
+             self.stacking_mode_enabled = new_state
+             if self.verbose:
+                 state = "ON [Stacked]" if self.stacking_mode_enabled else "OFF [Single]"
+                 print(f"🎛️ Stacking Mode: {state}")
 
     
     def _update_lfo_chorus(self, dt: float) -> None:
@@ -1005,32 +785,11 @@ class HarmonicBeacon:
                     elif self.midi.is_f1_control(msg):
                         self._handle_f1_change(msg.value)
                     
-                    elif self.midi.is_tolerance_control(msg):
-                        self._handle_tolerance_change(msg.value)
+                    elif self.midi.is_stacking_mix_control(msg):
+                        self._handle_stacking_mix_change(msg.value)
                     
-                    elif self.midi.is_lfo_rate_control(msg):
-                        self._handle_lfo_rate_change(msg.value)
-                    
-                    elif self.midi.is_vibrato_mode_toggle(msg):
-                        self._handle_vibrato_mode_toggle(msg.value)
-                    
-                    elif self.midi.is_multi_harmonic_toggle(msg):
-                        self._handle_multi_harmonic_toggle(msg.value)
-                    
-                    elif self.midi.is_max_harmonics_control(msg):
-                        self._handle_max_harmonics_change(msg.value)
-                        
-                    elif self.midi.is_primary_lock_toggle(msg):
-                        self._handle_primary_lock_toggle(msg.value)
-                        
-                    elif self.midi.is_harmonic_mix_control(msg):
-                        self._handle_harmonic_mix_change(msg.value)
-                        
-                    elif self.midi.is_natural_harmonics_toggle(msg):
-                        self._handle_natural_harmonics_toggle(msg.value)
-                        
-                    elif self.midi.is_natural_level_control(msg):
-                        self._handle_natural_level_change(msg.value)
+                    elif self.midi.is_stacking_mode_toggle(msg):
+                        self._handle_stacking_mode_toggle(msg.value)
 
                     elif self.midi.is_panic_cc(msg) and msg.value > 0:
                         self.panic()

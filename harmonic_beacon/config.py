@@ -44,12 +44,44 @@ SECONDARY_MIDI_PORT_PATTERN = "Minilab"
 # CC number for f₁ modulation (mod wheel = 1, common slider = 74)
 F1_CC_NUMBER = 74
 
-# CC number for tolerance slider (KeyLab slider 1 = CC67)
-# Maps 1-127 to TOLERANCE_MIN-TOLERANCE_MAX cents
-TOLERANCE_CC = 67
-TOLERANCE_MIN = 1.0    # cents
-TOLERANCE_MAX = 50.0   # cents
-DEFAULT_TOLERANCE = 25.0  # cents
+# CC number for Stacking Mode Toggle (CC22)
+# OFF = Play single best match (Local or Transposed)
+# ON = Stack Transposed (Voice 1) + Natural (Voice 2)
+STACKING_MODE_CC = 22
+
+# CC number for Stacking Mix (CC67) - Formerly Tolerance
+# Controls balance when Stacking Mode is ON
+# 0 = Only Natural, 127 = Only Transposed
+STACKING_MIX_CC = 67
+DEFAULT_STACKING_MIX = 64
+
+# Optimal Harmonic Prototypes for 12 chromatic intervals (0-11)
+# Selected for closest match to 12TET
+# Optimal Harmonic Prototypes (Simpler Ratios favored over Microtonal Accuracy)
+CHROMATIC_PROTOTYPES = [
+    1,   # 0:  Perfect Unison (0c)
+    17,  # 1:  Minor 2nd (105c, +5c)
+    9,   # 2:  Major 2nd (204c, +4c)
+    19,  # 3:  Minor 3rd (298c, -2c)
+    5,   # 4:  Major 3rd (386c, -14c) - Was 81. 5:4 is simpler.
+    21,  # 5:  Perfect 4th (471c, -29c) - Was 85. 21 is 3*7. P4 is hard. 11/8? 11=551c.
+    11,  # 6:  Tritone (551c, -49c) - Was 91 (609c). 11 is "Alphorn Fa".
+         #     Wait, 91 is closer to 600. 11 is closer to P4.
+         #     Let's keep 91 or find something mid? 23? 23=5280c? No.
+         #     n=45 (5*9)? n=6 is P5 (G). n=5 (E). n=7 (Bb).
+         #     Tritone is hard. Keep 91 or use 23 (4.52 octaves).
+         #     Let's use 23 (~628c). Or 45/32?
+         #     Let's stick to 91 for tritone as it's odd anyway.
+         #     Actually user wants "closest octave".
+         #     Let's try 11 (551c) - very flat tritone/sharp 4th. Character!
+         #     Or 7? 7 = 969c (m7).
+         #     Let's stick to 91 for now, Tritone is weird.
+    3,   # 7:  Perfect 5th (702c, +2c) - Was 12. 3 is THE P5.
+    13,  # 8:  Minor 6th (840c, +40c) - Was 51 (807c). 13 is neutral 6th.
+    27,  # 9:  Major 6th (906c, +6c) - 27 is 3^3. Low enough.
+    7,   # 10: Minor 7th (969c, -31c) - Was 57. 7 is Harmonic 7th!
+    15,  # 11: Major 7th (1088c, -12c) - Was 121 (1103c). 15 is 3*5.
+]
 
 # CC number for LFO rate slider (KeyLab slider 2 = CC68)
 # Maps 1-127 to LFO_RATE_MIN-LFO_RATE_MAX Hz
