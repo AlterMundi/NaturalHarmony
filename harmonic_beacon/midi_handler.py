@@ -60,84 +60,106 @@ class MidiHandler:
         self.port_pattern = port_pattern
         self.f1_cc = f1_cc
         self.debug = debug
-        self._port: Optional[mido.ports.BaseInput] = None
-        self._output_port: Optional[mido.ports.BaseOutput] = None
-        self._port_name: Optional[str] = None
+        self.debug = debug
+        self._ports: list[mido.ports.BaseInput] = []
+        self._output_ports: list[mido.ports.BaseOutput] = []
+        self._port_names: list[str] = []
         
     def open(self) -> str:
-        """Open the MIDI input port.
+        """Open all available MIDI input ports.
         
         Returns:
-            Name of the opened port
+            Comma-separated list of opened port names
             
         Raises:
-            RuntimeError: If no suitable port is found
+            RuntimeError: If no MIDI ports are found
         """
         available_ports = mido.get_input_names()
         
         if not available_ports:
             raise RuntimeError("No MIDI input ports available")
         
-        # Find matching port
-        port_name = None
-        if self.port_pattern:
-            for name in available_ports:
-                if self.port_pattern.lower() in name.lower():
-                    port_name = name
-                    break
+        self._ports = []
+        self._port_names = []
+        self._output_ports = []
         
-        # Fall back to first port if no match
-        if port_name is None:
-            port_name = available_ports[0]
-            if self.port_pattern:
-                print(f"Warning: No port matching '{self.port_pattern}' found, "
-                      f"using '{port_name}'")
-        
-        self._port = mido.open_input(port_name)
-        self._port_name = port_name
-        
-        # Try to open output port with same name for feedback
-        try:
-            output_ports = mido.get_output_names()
-            # Try exact match first
-            if port_name in output_ports:
-                self._output_port = mido.open_output(port_name)
-                if self.debug:
-                    print(f"[MIDI] Opened output port: {port_name}")
-            else:
-                 # Try approximate match
-                 for out_name in output_ports:
-                     if port_name[:-2] in out_name: # Simple heuristic
-                         self._output_port = mido.open_output(out_name)
-                         if self.debug:
-                             print(f"[MIDI] Opened output port (approx): {out_name}")
-                         break
-        except Exception as e:
-            if self.debug:
-                print(f"[MIDI] Could not open output port: {e}")
+        # Iterate over all available ports
+        for name in available_ports:
+            # If a pattern is specified, skip non-matching ports
+            if self.port_pattern and self.port_pattern.lower() not in name.lower():
+                continue
+
+            # Prevent feedback loops by ignoring system passthrough ports
+            lower_name = name.lower()
+            if "midi through" in lower_name or "rtmidi" in lower_name:
+                 if self.debug:
+                     print(f"[MIDI] Skipping potential loopback port: {name}")
+                 continue
                 
-        return port_name
+            try:
+                # Open input port
+                in_port = mido.open_input(name)
+                self._ports.append(in_port)
+                self._port_names.append(name)
+                if self.debug:
+                    print(f"[MIDI] Opened input port: {name}")
+
+                # Try to open output port with same name for feedback
+                try:
+                    output_ports = mido.get_output_names()
+                    # Try exact match first
+                    if name in output_ports:
+                        out_port = mido.open_output(name)
+                        self._output_ports.append(out_port)
+                        if self.debug:
+                            print(f"[MIDI] Opened output port: {name}")
+                    else:
+                        # Try approximate match
+                        for out_name in output_ports:
+                            if name[:-2] in out_name: # Simple heuristic
+                                out_port = mido.open_output(out_name)
+                                self._output_ports.append(out_port)
+                                if self.debug:
+                                    print(f"[MIDI] Opened output port (approx): {out_name}")
+                                break
+                except Exception as e:
+                    if self.debug:
+                        print(f"[MIDI] Could not open output port for {name}: {e}")
+                        
+            except Exception as e:
+                print(f"[MIDI] Error opening port {name}: {e}")
+
+        if not self._ports:
+             # If we tried to filter but found nothing, or just failed to open anything
+             if self.port_pattern:
+                 print(f"Warning: No ports matching '{self.port_pattern}' enabled.")
+             else:
+                 raise RuntimeError("Could not open any MIDI ports")
+
+        return ", ".join(self._port_names)
     
     def close(self) -> None:
-        """Close the MIDI input port."""
-        if self._port is not None:
-            self._port.close()
-            self._port = None
-        if self._output_port is not None:
-            self._output_port.close()
-            self._output_port = None
-            self._port_name = None
+        """Close all MIDI input and output ports."""
+        for port in self._ports:
+            port.close()
+        self._ports.clear()
+        
+        for port in self._output_ports:
+            port.close()
+        self._output_ports.clear()
+        self._port_names.clear()
     
     def poll(self) -> list[mido.Message]:
-        """Poll for pending MIDI messages (non-blocking).
+        """Poll for pending MIDI messages from all ports (non-blocking).
         
         Returns:
             List of pending MIDI messages
         """
-        if self._port is None:
-            return []
-        
-        messages = list(self._port.iter_pending())
+        all_messages = []
+        for port in self._ports:
+            all_messages.extend(list(port.iter_pending()))
+            
+        messages = all_messages
         
         if self.debug:
             for msg in messages:
@@ -146,10 +168,10 @@ class MidiHandler:
         return messages
 
     def send_message(self, msg: mido.Message) -> None:
-        """Send a MIDI message to the output port."""
-        if self._output_port:
+        """Send a MIDI message to all output ports."""
+        for port in self._output_ports:
             try:
-                self._output_port.send(msg)
+                port.send(msg)
                 if self.debug:
                     print(f"[MIDI OUT] {msg}")
             except Exception as e:
@@ -237,13 +259,15 @@ class MidiHandler:
     
     @property
     def port_name(self) -> Optional[str]:
-        """Name of the currently open port."""
-        return self._port_name
+        """Names of currently open ports (comma separated)."""
+        if not self._port_names:
+            return None
+        return ", ".join(self._port_names)
     
     @property
     def is_open(self) -> bool:
-        """Whether the port is currently open."""
-        return self._port is not None
+        """Whether any port is currently open."""
+        return len(self._ports) > 0
     
     @staticmethod
     def list_ports() -> list[str]:

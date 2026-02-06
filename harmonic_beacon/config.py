@@ -35,7 +35,7 @@ HIGHEST_MIDI_NOTE = 108 # C8
 
 # Pattern to match MIDI input port name (case-insensitive substring match)
 # Set to None to use the first available port
-MIDI_PORT_PATTERN = "Launchpad"
+MIDI_PORT_PATTERN = None
 
 # Secondary controller for modulation (e.g., Minilab3)
 # Notes on this controller trigger modulation without producing sound
