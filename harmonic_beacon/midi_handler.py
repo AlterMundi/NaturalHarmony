@@ -111,27 +111,66 @@ class MidiHandler:
                 pass
 
         if not self._ports:
-             # Fallback to Virtual Port
+             # If we tried to filter but found nothing, or just failed to open anything
              print("Warning: Could not open any physical MIDI ports (likely busy).")
-             print("Attempting to create a virtual MIDI port named 'HarmonicBeacon Input'...")
              
-             try:
-                 # Create virtual input port
-                 in_port = mido.open_input('HarmonicBeacon Input', virtual=True)
-                 self._ports.append(in_port)
-                 self._port_names.append('HarmonicBeacon Input (Virtual)')
+             # Check for VirMIDI ports (Zynthian integration)
+             # "VirMIDI" usually appears as an OUTPUT port (destination) in mido.get_output_names()
+             # We want to send our generated notes TO it, so Zynthian sees them coming FROM it.
+             virmidi_port_name = None
+             for name in mido.get_output_names():
+                 if "VirMIDI" in name and "0-0" in name: # Prefer first port (e.g. 4-0)
+                     virmidi_port_name = name
+                     break
+                 if "VirMIDI" in name and not virmidi_port_name:
+                     virmidi_port_name = name # Fallback to any VirMIDI port
+
+             if virmidi_port_name:
+                 print(f"[MIDI] Detected VirMIDI port: '{virmidi_port_name}'")
+                 print("[MIDI] Integrating with Zynthian via VirMIDI...")
                  
-                 # Create virtual output port
-                 out_port = mido.open_output('HarmonicBeacon Output', virtual=True)
-                 self._output_ports.append(out_port)
+                 try:
+                     # 1. Open VirMIDI as our OUTPUT (where we send notes)
+                     out_port = mido.open_output(virmidi_port_name)
+                     self._output_ports.append(out_port)
+                     print(f"[MIDI] Connected to VirMIDI Output: {virmidi_port_name}")
+                     
+                     # 2. We still need an INPUT for the KeyLab/Launchpad
+                     # Since physical ports are busy, we still create a Virtual Input
+                     in_port = mido.open_input('HarmonicBeacon Input', virtual=True)
+                     self._ports.append(in_port)
+                     self._port_names.append('HarmonicBeacon Input (Virtual)')
+                     
+                     print("[MIDI] Created virtual input port: HarmonicBeacon Input")
+                     
+                     # 3. Auto-connect physical controllers to our Virtual Input
+                     self._start_auto_connect_monitor()
+                     
+                 except Exception as e:
+                     print(f"[MIDI] Failed to connect to VirMIDI: {e}")
+                     raise RuntimeError(f"VirMIDI connection failed: {e}") from e
+                     
+             else:
+                 # Standard Fallback (No VirMIDI)
+                 print("Attempting to create a virtual MIDI port named 'HarmonicBeacon Input'...")
                  
-                 # Start Auto-Connect Monitor
-                 self._start_auto_connect_monitor()
-                 
-             except Exception as e:
-                 if self.port_pattern:
-                     print(f"Warning: No ports matching '{self.port_pattern}' enabled.")
-                 raise RuntimeError(f"Could not open any MIDI ports (Physical or Virtual). Error: {e}") from e
+                 try:
+                     # Create virtual input port
+                     in_port = mido.open_input('HarmonicBeacon Input', virtual=True)
+                     self._ports.append(in_port)
+                     self._port_names.append('HarmonicBeacon Input (Virtual)')
+                     
+                     # Create virtual output port
+                     out_port = mido.open_output('HarmonicBeacon Output', virtual=True)
+                     self._output_ports.append(out_port)
+                     
+                     # Start Auto-Connect Monitor
+                     self._start_auto_connect_monitor()
+                     
+                 except Exception as e:
+                     if self.port_pattern:
+                         print(f"Warning: No ports matching '{self.port_pattern}' enabled.")
+                     raise RuntimeError(f"Could not open any MIDI ports (Physical or Virtual). Error: {e}") from e
 
         return ", ".join(self._port_names)
 
