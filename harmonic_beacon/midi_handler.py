@@ -146,6 +146,9 @@ class MidiHandler:
                  self._output_ports.append(out_port)
                  print("[MIDI] Created virtual output port: HarmonicBeacon Output")
                  
+                 # Attempt to auto-connect physical ports to our virtual port
+                 self._auto_connect_virtual_ports()
+                 
              except Exception as e:
                  print(f"[MIDI] Failed to create virtual port: {e}")
                  if self.port_pattern:
@@ -153,6 +156,79 @@ class MidiHandler:
                  raise RuntimeError(f"Could not open any MIDI ports (Physical or Virtual). Error: {e}") from e
 
         return ", ".join(self._port_names)
+
+    def _auto_connect_virtual_ports(self) -> None:
+        """Automatically connect matching physical MIDI outputs to our virtual input using aconnect."""
+        try:
+            import subprocess
+            import re
+            
+            print("[MIDI] Auto-connecting physical ports to HarmonicBeacon...")
+            
+            # Get list of clients from aconnect
+            result = subprocess.run(['aconnect', '-l'], capture_output=True, text=True)
+            output = result.stdout
+            
+            # Regex to find client ID and name
+            # client 28: 'Keystation 49' [type=kernel,card=3]
+            client_pattern = re.compile(r"client (\d+): '([^']+)'")
+            
+            # Find our virtual port ID
+            my_client_id = None
+            for match in client_pattern.finditer(output):
+                client_id, name = match.groups()
+                if "HarmonicBeacon" in name: # Logic to find our own port
+                    # In python-rtmidi/ALSA, the client name usually matches the python process or similar
+                    # But the PORT name we passed is 'HarmonicBeacon Input'
+                    # Let's iterate ports to be safe
+                    pass
+
+            # Since 'aconnect -l' output structure is hierarchical (client -> ports), 
+            # let's parse a bit more robustly or just try to connect by name if possible.
+            # actually, aconnect -l shows:
+            # client 128: 'HarmonicBeacon Input' [type=user,pid=12345]
+            #     0 'HarmonicBeacon Input'
+            
+            # Let's simple try to find the ID of 'HarmonicBeacon Input'
+            # and IDs of potential controllers.
+            
+            my_port_id = None
+            
+            # Simple parsing of aconnect -l output line by line
+            current_client = None
+            
+            controllers = []
+            
+            lines = output.splitlines()
+            for line in lines:
+                if line.startswith("client "):
+                    # New client
+                    match = client_pattern.search(line)
+                    if match:
+                        current_client = match.group(1)
+                        client_name = match.group(2)
+                        
+                        if "HarmonicBeacon Input" in client_name:
+                            my_port_id = f"{current_client}:0"
+                        elif "Midi Through" in client_name:
+                            continue # Skip Midi Through
+                        elif "Timer" in client_name or "Announce" in client_name:
+                            continue
+                        else:
+                            # Potential controller
+                            # We assume the first port (0) is the output for now
+                            controllers.append(f"{current_client}:0")
+            
+            if my_port_id:
+                print(f"[MIDI] Found virtual input at {my_port_id}")
+                for ctrl in controllers:
+                    print(f"[MIDI] Connecting {ctrl} -> {my_port_id}")
+                    subprocess.run(['aconnect', ctrl, my_port_id], capture_output=True)
+            else:
+                print("[MIDI] Could not determine ID of virtual port, auto-connect failed.")
+                
+        except Exception as e:
+            print(f"[MIDI] Auto-connect failed: {e}")
     
     def close(self) -> None:
         """Close all MIDI input and output ports."""
