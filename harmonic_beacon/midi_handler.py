@@ -193,19 +193,19 @@ class MidiHandler:
         import subprocess
         import re
 
+        # Regex patterns to parse aconnect -l output
+        # client 28: 'KeyLab mkII 61' [type=kernel,card=3]
         client_start_pattern = re.compile(r"^client (\d+): '([^']+)'")
+        #     0 'KeyLab mkII 61 MIDI'
         port_line_pattern = re.compile(r"^\s+(\d+) '([^']+)'")
         
         connected_sources = set()
 
         while not self._stop_monitor.is_set():
             try:
-                # 1. Find OUR Virtual Port ID (it might change if restarted, though unlikley in loop)
-                # We need to re-parse every time because client IDs can shift if things restart
                 result = subprocess.run(['aconnect', '-l'], capture_output=True, text=True)
                 output = result.stdout
                 
-                my_client_id = None
                 my_port_id = None
                 available_sources = set()
                 
@@ -226,39 +226,50 @@ class MidiHandler:
                         port_name = port_match.group(2)
                         full_port_id = f"{current_client_id}:{port_num}"
                         
-                        if "HarmonicBeacon Input" in port_name:
-                            my_client_id = current_client_id
+                        # Identify OUR Virtual Input Port
+                        # In the log: client 137: 'RtMidiIn Client' -> 0 'HarmonicBeacon Input'
+                        # So we match the PORT name. Use strip() just in case.
+                        if "HarmonicBeacon Input" in port_name.strip():
                             my_port_id = full_port_id
+                            # print(f"[MIDI Monitor Debug] Found My Input at {full_port_id} (Client: {current_client_name})")
                         
-                        # Identify candidate sources
+                        # Identify Candidate Sources (Hardware MIDI Controllers)
+                        # We want to connect: KeyLab (28:0), Launchpad (24:0), etc.
+                        # We EXCLUDE:
+                        # - System/Timer (0)
+                        # - Midi Through (14)
+                        # - VirMIDI ports (32 in this case, often used for output, usually we don't want to loop back)
+                        # - RtMidi Clients (us, or other software)
+                        # - Network/Announce
+                        
                         elif (current_client_id != "0" and 
                               "Midi Through" not in current_client_name and
-                              "HarmonicBeacon" not in port_name and 
-                              "RtMidi" not in current_client_name):
-                             # Only connect OUTPUT ports (source files)
-                             # aconnect -l lists all ports. We need to know if it's an output.
-                             # But 'aconnect -l' usually lists both.
-                             # We'll valid connection by trying it.
-                             available_sources.add(full_port_id)
+                              "Virtual Raw MIDI" not in current_client_name and  # Avoid VirMIDI
+                              "RtMidi" not in current_client_name): # Avoid other software ports
+                             
+                            available_sources.add(full_port_id)
 
                 if my_port_id:
-                    # 2. Connect new sources
+                    # Connect new sources
                     for source in available_sources:
                         if source not in connected_sources:
-                            # Verify if already connected (aconnect -l usually shows arrows)
-                            # But simpler to just try 'aconnect' (it's idempotent-ish, returns error if connected)
+                            # It seems safer to always try connecting, as connections can be dropped externally
+                            # aconnect is harmless if already connected (returns 1 or prints error, we catch it)
                             
-                            # We check if 'Connecting To: ...' is already in the output for this port?
-                            # Parsing 'Connecting To' is complex. Let's just try to run aconnect.
-                            # We will suppress errors.
-                            
-                            # Log only if we haven't seen this source before in this session
+                            # Log connection attempt
                             print(f"[MIDI Monitor] Connecting {source} -> {my_port_id}")
                             ret = subprocess.run(['aconnect', source, my_port_id], capture_output=True)
                             
-                            # Identify if successful or already connected
-                            # If connection made, add to our set
-                            connected_sources.add(source)
+                            if ret.returncode == 0:
+                                print(f"[MIDI Monitor] Successfully connected {source}")
+                                connected_sources.add(source)
+                            else:
+                                # It might fail if already connected or busy, that's fine.
+                                # But we add it to 'connected' only if we actually think we did it.
+                                # Actually, if it's already connected, returncode is usually non-zero (Device or resource busy/Invalid argument)
+                                # So let's just mark it as "attempted" so we don't spam logs?
+                                # No, let's keep trying every loop if it failed, but maybe silent fail.
+                                pass
                 
             except Exception as e:
                 print(f"[MIDI Monitor] Error: {e}")
