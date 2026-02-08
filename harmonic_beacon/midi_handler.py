@@ -131,10 +131,26 @@ class MidiHandler:
 
         if not self._ports:
              # If we tried to filter but found nothing, or just failed to open anything
-             if self.port_pattern:
-                 print(f"Warning: No ports matching '{self.port_pattern}' enabled.")
-             else:
-                 raise RuntimeError("Could not open any MIDI ports")
+             print("Warning: Could not open any physical MIDI ports (likely busy).")
+             print("Attempting to create a virtual MIDI port named 'HarmonicBeacon Input'...")
+             
+             try:
+                 # Create virtual input port
+                 in_port = mido.open_input('HarmonicBeacon Input', virtual=True)
+                 self._ports.append(in_port)
+                 self._port_names.append('HarmonicBeacon Input (Virtual)')
+                 print("[MIDI] Created virtual input port: HarmonicBeacon Input")
+                 
+                 # Create virtual output port
+                 out_port = mido.open_output('HarmonicBeacon Output', virtual=True)
+                 self._output_ports.append(out_port)
+                 print("[MIDI] Created virtual output port: HarmonicBeacon Output")
+                 
+             except Exception as e:
+                 print(f"[MIDI] Failed to create virtual port: {e}")
+                 if self.port_pattern:
+                     print(f"Warning: No ports matching '{self.port_pattern}' enabled.")
+                 raise RuntimeError(f"Could not open any MIDI ports (Physical or Virtual). Error: {e}") from e
 
         return ", ".join(self._port_names)
     
