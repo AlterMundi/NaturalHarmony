@@ -234,6 +234,17 @@ class HarmonicBeacon:
             vel_norm = velocity / 127.0
             self.osc.send_note_on(vid, frequency, vel_norm)
             self.osc.broadcast_voice_on(vid, frequency, vel_norm, midi_note, harmonic_n)
+            
+            # Send standard MIDI Note On (for Zynthian/Hardware)
+            # Map frequency to nearest MIDI note
+            target_midi = int(round(frequency_to_midi_float(frequency)))
+            target_midi = max(0, min(127, target_midi))
+            self.midi.send_message(mido.Message(
+                'note_on',
+                note=target_midi,
+                velocity=velocity,
+                channel=channel
+            ))
         
         if self.mpe_enabled and self.mpe is not None and voice_ids:
             self.mpe.send_note_on(voice_ids[0], frequency, vel_norm)
@@ -473,6 +484,21 @@ class HarmonicBeacon:
             if final_vel > 0.001:
                 self.osc.send_note_on(voice_id, freq, final_vel)
                 self.osc.broadcast_voice_on(voice_id, freq, final_vel, note, n)
+                
+                # Send standard MIDI Note On (for Zynthian/Hardware)
+                # Map frequency to nearest MIDI note
+                target_midi = int(round(frequency_to_midi_float(freq)))
+                target_midi = max(0, min(127, target_midi))
+                # Scale velocity by gain
+                midi_vel = int(velocity * gain)
+                midi_vel = max(1, min(127, midi_vel))
+                
+                self.midi.send_message(mido.Message(
+                    'note_on',
+                    note=target_midi,
+                    velocity=midi_vel,
+                    channel=channel
+                ))
         
         # Broadcast key
         self.osc.broadcast_key_on(note, velocity)
@@ -537,6 +563,16 @@ class HarmonicBeacon:
                     freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
                     self.osc.send_note_off(voice_id, frequency=freq)
                     self.osc.broadcast_voice_off(voice_id)
+                    
+                    # Send standard MIDI Note Off
+                    target_midi = int(round(frequency_to_midi_float(freq))) if freq > 0 else note
+                    target_midi = max(0, min(127, target_midi))
+                    self.midi.send_message(mido.Message(
+                        'note_off',
+                        note=target_midi,
+                        velocity=0,
+                        channel=channel
+                    ))
                 
                 # Broadcast key off
                 self.osc.broadcast_key_off(note)
@@ -564,6 +600,16 @@ class HarmonicBeacon:
             freq = pair.frequencies[i] if i < len(pair.frequencies) else 0.0
             self.osc.send_note_off(voice_id, frequency=freq)
             self.osc.broadcast_voice_off(voice_id)
+            
+            # Send standard MIDI Note Off
+            target_midi = int(round(frequency_to_midi_float(freq))) if freq > 0 else note
+            target_midi = max(0, min(127, target_midi))
+            self.midi.send_message(mido.Message(
+                'note_off',
+                note=target_midi,
+                velocity=0,
+                channel=channel
+            ))
         
         # Broadcast key off
         self.osc.broadcast_key_off(note)

@@ -135,7 +135,17 @@ class MidiHandler:
                      self._output_ports.append(out_port)
                      print(f"[MIDI] Connected to VirMIDI Output: {virmidi_port_name}")
                      
-                     # 2. We still need an INPUT for the KeyLab/Launchpad
+                     # 2. ALSO Create a Virtual Output (Fallback/Manual)
+                     # This ensures we exist in the JACK graph even if VirMIDI routing fails.
+                     try:
+                        out_virtual = mido.open_output('HarmonicBeacon Output', virtual=True)
+                        self._output_ports.append(out_virtual)
+                        self._port_names.append('HarmonicBeacon Output (Virtual)')
+                        print("[MIDI] Created fallback virtual output port: HarmonicBeacon Output")
+                     except Exception as e:
+                        print(f"[MIDI] Warning: Could not create fallback virtual output: {e}")
+
+                     # 3. We still need an INPUT for the KeyLab/Launchpad
                      # Since physical ports are busy, we still create a Virtual Input
                      in_port = mido.open_input('HarmonicBeacon Input', virtual=True)
                      self._ports.append(in_port)
