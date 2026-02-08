@@ -268,67 +268,121 @@ class MidiHandler:
                                     src_client = source.split(':')[0]
                                     dest_client = my_port_id.split(':')[0]
                                     
+                                    # Get client name for lookup
+                                    current_client_name = clients.get(src_client, {}).get('name', "")
+
                                     # ROBUST JACK LOOKUP
                                     # 1. Start with jack_lsp -A (aliases) to find the true system port for this ALSA client
-                                    # We are looking for "system:midi_capture_X" that corresponds to ALSA Client X
-                                    # But Zynthian/a2j map them via ZynMidiRouter or direct system ports.
-                                    # SAFEST BET: Look for the ALSA Name in the jack_lsp output? No, jack_lsp only shows JACK names.
-                                    # But wait! 'jack_lsp -A -c' shows aliases.
-                                    # ALSA-JACK bridges often alias "system:midi_capture_X" to "KeyLab mkII 61:MIDI 1"
+                                    # The ALSA Client Name (current_client_name) is "KeyLab mkII 61"
+                                    # jack_lsp -A output format:
+                                    # system:midi_capture_32
+                                    #    USB:2.1.4/KeyLab mkII 61 IN 1
+                                    #    KeyLab mkII 61 1
                                     
-                                    # Let's get full info
-                                    jack_res = subprocess.run(['jack_lsp', '-A', '-c'], capture_output=True, text=True)
+                                    # We need to find the port that has "KeyLab mkII 61" in its aliases.
+                                    
+                                    jack_res = subprocess.run(['jack_lsp', '-A'], capture_output=True, text=True)
                                     jack_lines = jack_res.stdout.splitlines()
                                     
                                     jack_src = None
                                     jack_dest = None
                                     
-                                    # Finding Source (Harvesting from ALSA client ID)
-                                    # We know the ALSA Client ID is 'src_client' (e.g. 28)
-                                    # We can try to guess "system:midi_capture_{src_client}" first as a heuristic
-                                    # But we must verify it exists.
-                                    # Also, sometimes it's mapped differently.
-                                    # A strict check: The port name usually contains "capture" and the number.
+                                    # Helper to parse jack_lsp -A output
+                                    # We build a mapping of Alias -> PortName
+                                    # OR we just search linearly since we want to match our specific client name
                                     
-                                    # Better heuristic:
-                                    # In previous log: system:midi_capture_28   ZynMidiRouter:dev18_in
-                                    # It seems to match client ID exactly.
-                                    guess_src = f"system:midi_capture_{src_client}"
+                                    current_jack_port = None
+                                    found_src_port_name = None
                                     
-                                    # Finding Dest (Our App)
-                                    # We know our client ID 'dest_client' (e.g. 137)
-                                    # a2j names it: "a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input"
+                                    # ALSA Client Name to look for (from aconnect iteration)
+                                    # current_client_name is e.g. "KeyLab mkII 61"
+                                    # But jack alias might be "KeyLab mkII 61 1"
+                                    # We'll prioritize port-specific names if we have them, but current_client_name is safest broad match.
+                                    # For launchpad: "Launchpad Mini" -> alias "Launchpad Mini"
+                                    
+                                    target_alias = current_client_name
                                     
                                     for line in jack_lines:
-                                        # Only look at port definitions (lines not starting with whitespace)
                                         if not line.startswith(' '):
-                                            port_name = line.strip()
+                                            current_jack_port = line.strip()
                                             
-                                            # Check Source candidate
-                                            if guess_src == port_name:
-                                                 jack_src = port_name
-                                            
-                                            # Check Dest candidate
+                                            # Check if this port is our destination?
                                             # "a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input"
-                                            if f"RtMidiIn Client [{dest_client}]" in port_name and "playback" in port_name and "HarmonicBeacon Input" in port_name:
-                                                 jack_dest = port_name
-                                    
-                                    # If simple guess failed, try looking for aliases or partial matches?
-                                    # For Zynthian specifically, let's stick to the guess if we found it.
-                                    
-                                    if jack_src and jack_dest:
-                                        print(f"[MIDI Monitor] Attempting JACK connection: {jack_src} -> {jack_dest}")
-                                        jret = subprocess.run(['jack_connect', jack_src, jack_dest], capture_output=True)
-                                        
-                                        if jret.returncode == 0:
-                                            print(f"[MIDI Monitor] Successfully connected via JACK: {jack_src} -> {jack_dest}")
-                                            connected_sources.add(source)
+                                            if f"RtMidiIn Client [{dest_client}]" in current_jack_port and "playback" in current_jack_port and "HarmonicBeacon Input" in current_jack_port:
+                                                 jack_dest = current_jack_port
                                         else:
-                                            # Usually fails if already connected.
-                                            # print(f"[MIDI Monitor] JACK connection failed: {jret.stderr.strip()}")
-                                            pass
+                                            # This is an alias for the current_jack_port
+                                            alias = line.strip()
+
+                                            # We are looking for a SOURCE port (Capture) that matches our hardware device
+                                            if "capture" in current_jack_port and target_alias in alias:
+                                                 # Found it!
+                                                 # But wait, KeyLab has 2 ports (IN 1, IN 2).
+                                                 # "KeyLab mkII 61 1" vs "KeyLab mkII 61 2"
+                                                 # We want the FIRST one usually (notes), or both?
+                                                 # Previous logic tried to connect all.
+                                                 # current_client_name is just the Device Name.
+                                                 # ALSA Loop was iterating over ports of that device.
+                                                 # Here we are inside the ALSA Loop processing 'source' (which is a specific port, e.g. 28:0)
+                                                 # We don't easily know the ALSA Port Name here (it was port_name variable, but we don't have it in this scope easily unless we parsed it again).
+                                                 # Wait, we DO have it? No, 'source' is just "28:0".
+                                                 # We lost the port name in the set comprehension.
+                                                 
+                                                 # Compromise: Connect ANY port matching the Device Name alias.
+                                                 # This connects both MIDI 1 and DAW ports. That's fine (better than none).
+                                                 # Even better: The alias usually contains the port index: "KeyLab mkII 61 1"
+                                                 
+                                                 # Optimization: If we already found a match, keep it.
+                                                 # But KeyLab might have mulitple ports.
+                                                 if not found_src_port_name:
+                                                     found_src_port_name = current_jack_port
+                                                 # If we found another port for same device, maybe we should connect that too?
+                                                 # Current logic only supports finding ONE jack_src per 'source' item.
+                                                 # This is a limitation.
+                                                 # BUT: 'source' (28:0) maps to ONE specific system port (capture_32).
+                                                 # 'source' (28:1) maps to ONE specific system port (capture_33).
+                                                 
+                                                 # Since we iterate over 'available_sources' which contains "28:0", "28:1", etc.
+                                                 # We ideally want to find the SPECIFIC jack port for "28:0".
+                                                 # But the mapping isn't transparent here.
+                                                 
+                                                 # Heuristic:
+                                                 # If we are looking for 28:0, we want the first match.
+                                                 # If we are looking for 28:1, we want the second match.
+                                                 # This is getting complicated to parse from just "28:0".
+                                                 
+                                                 # SIMPLER APPROACH:
+                                                 # Just find ANY Jack port that aliases to this Device Name and connect it.
+                                                 # If we connect "KeyLab mkII 61 DAW" to our Input, it's fine, just generates noise or ignored messages.
+                                                 # If we connect "KeyLab mkII 61 MIDI", it works.
+                                                 # So, connecting ALL ports matching the Alias is the safest "Shotgun" approach.
+                                                 pass
+                                    
+                                    # Re-scan to find ALL ports for this device
+                                    jack_srcs = []
+                                    current_jack_port = None
+                                    for line in jack_lines:
+                                        if not line.startswith(' '):
+                                            current_jack_port = line.strip()
+                                        else:
+                                            alias = line.strip()
+                                            # We are looking for capture ports matching our client name
+                                            if "capture" in current_jack_port and target_alias in alias:
+                                                if current_jack_port not in jack_srcs:
+                                                    jack_srcs.append(current_jack_port)
+
+                                    if jack_srcs and jack_dest:
+                                        for js in jack_srcs:
+                                            # Avoid duplicates in our set (approximate)
+                                            # Just try connecting
+                                            print(f"[MIDI Monitor] Attempting JACK connection: {js} -> {jack_dest}")
+                                            jret = subprocess.run(['jack_connect', js, jack_dest], capture_output=True)
+                                            if jret.returncode == 0:
+                                                print(f"[MIDI Monitor] Successfully connected via JACK: {js} -> {jack_dest}")
+                                        
+                                        connected_sources.add(source) # Mark this source as "handled"
                                     else:
-                                        print(f"[MIDI Monitor] Could not resolve JACK ports for routing. Src: {jack_src}, Dest: {jack_dest}")
+                                        print(f"[MIDI Monitor] Could not resolve JACK ports. Target Alias: '{target_alias}', Dest: {jack_dest}")
 
 
                                 except Exception as e:
