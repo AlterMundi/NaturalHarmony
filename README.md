@@ -48,94 +48,21 @@ pip install -r requirements.txt
 - **mido** — MIDI message handling
 - **python-rtmidi** — Real-time MIDI I/O
 - **pyliblo3** — OSC communication with Surge XT
+- **python-osc** — OSC communication with Surge XT
 
-## Usage
+## Troubleshooting
 
-### Basic Usage
+### Permission denied: /dev/snd/seq
 
-```bash
-# Run with mock OSC (for testing without Surge XT)
-python -m harmonic_beacon.main --mock
+If you see an error like `ALSA lib seq_hw.c:466:(snd_seq_hw_open) open /dev/snd/seq failed: Permission denied`, your user does not have permission to access the ALSA sequencer.
 
-# Run with real OSC to Surge XT
-python -m harmonic_beacon.main --broadcast --mpe
-
-# Run the 3D Visualizer
-python -m harmonic_visualizer.main --3d
-```
-
-### Hardware Support
-
-- **Arturia KeyLab 61 MkII** (Keyboard Mode)
-- **Novation Launchpad Mini** (Pad Mode)
-
-### Modes
-
-#### Keyboard Mode
-Maps the 12-semitone octave to specific harmonics based on intervals (see table below).
-
-#### Pad Mode (Launchpad Mini)
-Maps the 8x8 pad grid directly to Harmonics 1-64.
-- **Toggle**: Top-Right Side Button (Note 8).
-- **Panic**: CC 111 or Note 111 (Top Right Side Button on some layouts).
-- **Layout**: Harmonic 1 is at the Bottom-Left.
-- **Feedback**: Pads light up Green (High Velocity) when active.
-
-### Command Line Options
-
-```
---mock          Use mock OSC sender (logs output instead of sending)
---quiet         Reduce output verbosity
---list-ports    List available MIDI input ports and exit
---f1 FREQ       Set initial base frequency in Hz (default: 54.0)
-```
-
-### List MIDI Ports
+To fix this, add your user to the `audio` group:
 
 ```bash
-python -m harmonic_beacon.main --list-ports
+sudo usermod -a -G audio $USER
 ```
 
-## Configuration
-
-Edit `harmonic_beacon/config.py` to customize:
-
-- **DEFAULT_F1** — Base frequency (default: 54.0 Hz)
-- **F1_MIN / F1_MAX** — Range for CC modulation
-- **MIDI_PORT_PATTERN** — Substring to match your controller
-- **F1_CC_NUMBER** — CC number for f₁ modulation (default: 1 = mod wheel)
-- **OSC_HOST / OSC_PORT** — Surge XT OSC target
-
-## Surge XT Setup
-
-1. Open Surge XT
-2. Enable OSC input (Menu → Audio/MIDI → OSC)
-3. Set the OSC port to match `config.OSC_PORT` (default: 9000)
-
-## f₁ Modulation
-
-Use your controller's mod wheel (CC 1) or configure a slider to smoothly shift the base frequency. All active notes will follow the modulation in real-time, creating evolving harmonic relationships.
-
-## Development
-
-### Running Tests
-
-```bash
-pytest tests/ -v
-```
-
-### Project Structure
-
-```
-harmonic_beacon/
-├── __init__.py      # Package init
-├── config.py        # Configuration constants
-├── harmonics.py     # Harmonic math and mappings
-├── midi_handler.py  # MIDI input processing
-├── osc_sender.py    # OSC output to Surge XT
-├── polyphony.py     # Voice tracking
-└── main.py          # Entry point and event loop
-```
+Then **log out and log back in** (or reboot) for the changes to take effect.
 
 ## License
 
