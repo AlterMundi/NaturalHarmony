@@ -253,23 +253,73 @@ class MidiHandler:
                     # Connect new sources
                     for source in available_sources:
                         if source not in connected_sources:
-                            # It seems safer to always try connecting, as connections can be dropped externally
-                            # aconnect is harmless if already connected (returns 1 or prints error, we catch it)
-                            
                             # Log connection attempt
                             print(f"[MIDI Monitor] Connecting {source} -> {my_port_id}")
                             ret = subprocess.run(['aconnect', source, my_port_id], capture_output=True)
                             
                             if ret.returncode == 0:
-                                print(f"[MIDI Monitor] Successfully connected {source}")
+                                print(f"[MIDI Monitor] Successfully connected via ALSA: {source}")
                                 connected_sources.add(source)
                             else:
-                                # It might fail if already connected or busy, that's fine.
-                                # But we add it to 'connected' only if we actually think we did it.
-                                # Actually, if it's already connected, returncode is usually non-zero (Device or resource busy/Invalid argument)
-                                # So let's just mark it as "attempted" so we don't spam logs?
-                                # No, let's keep trying every loop if it failed, but maybe silent fail.
-                                pass
+                                # Fallback to JACK Connection (Zynthian compatibility)
+                                # If ALSA is busy (locked by Zynthian/a2jmidid), we must route via JACK.
+                                try:
+                                    # Parse IDs: source "28:0" -> client 28
+                                    src_client = source.split(':')[0]
+                                    dest_client = my_port_id.split(':')[0]
+                                    
+                                    # Guess JACK Port Names based on Zynthian conventions
+                                    # Source: system:midi_capture_{client_id} (Hardware via ALSA)
+                                    # Dest: a2j:RtMidiIn Client [{client_id}] (Software via a2jmidid)
+                                    
+                                    jack_src = f"system:midi_capture_{src_client}"
+                                    
+                                    # Find exact Dest name from jack_lsp
+                                    jack_res = subprocess.run(['jack_lsp'], capture_output=True, text=True)
+                                    jack_ports = jack_res.stdout.splitlines()
+                                    
+                                    jack_dest = None
+                                    # Look for a port containing our client ID and "playback" (which is Input in a2j-speak usually)
+                                    # Actually, let's look for "RtMidiIn Client [{dest_client}]"
+                                    search_str = f"RtMidiIn Client [{dest_client}]"
+                                    for p in jack_ports:
+                                        if search_str in p and "playback" in p.lower(): 
+                                            # "playback" in JACK usually means OUTPUT, but a2j is weird.
+                                            # In the user log: a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input
+                                            # Yes, that is the one we want to connect TO?
+                                            # Wait.
+                                            # JACK Source (Output) -> JACK Sink (Input).
+                                            # system:midi_capture_X is a Source.
+                                            # a2j:... (playback) often means it's an ALSA Playback port, so it consumes MIDI from ALSA 
+                                            # and outputs to JACK? OR it consumes MIDI from JACK and plays to ALSA?
+                                            # "playback" (ALSA) -> CONSUMES data from app -> SENDS to Hardware/Graph.
+                                            # "capture" (ALSA) -> PRODUCES data from Hardware -> SENDS to App.
+                                            
+                                            # Let's re-read the log:
+                                            # a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input
+                                            # This is an ALSA INPUT port (we read from it).
+                                            # So a2j exposes it as a JACK OUTPUT (Source)?? No, that would make no sense.
+                                            # Unless... we want to WRITE to it.
+                                            # We want KeyLab (Source) -> Beacon (Sink).
+                                            # Beacon is an ALSA Input.
+                                            # a2j usually exposes ALSA Inputs as JACK Ports that you can CONNECT TO (Sinks).
+                                            # Let's assume this is the Sink.
+                                            jack_dest = p
+                                            break
+                                    
+                                    if jack_dest:
+                                        print(f"[MIDI Monitor] Attempting JACK connection: {jack_src} -> {jack_dest}")
+                                        jret = subprocess.run(['jack_connect', jack_src, jack_dest], capture_output=True)
+                                        if jret.returncode == 0:
+                                            print(f"[MIDI Monitor] Successfully connected via JACK: {jack_src} -> {jack_dest}")
+                                            connected_sources.add(source) # Mark as connected so we don't retry locally
+                                        else:
+                                            pass # print(f"[MIDI Monitor] JACK connection failed: {jret.stderr}")
+                                    else:
+                                        pass # print(f"[MIDI Monitor] Could not find JACK destination for client {dest_client}")
+
+                                except Exception as e:
+                                    print(f"[MIDI Monitor] JACK fallback error: {e}")
                 
             except Exception as e:
                 print(f"[MIDI Monitor] Error: {e}")
