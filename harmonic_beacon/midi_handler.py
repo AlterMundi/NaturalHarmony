@@ -208,6 +208,7 @@ class MidiHandler:
                 
                 my_port_id = None
                 available_sources = set()
+                clients = {}
                 
                 current_client_id = None
                 current_client_name = ""
@@ -218,6 +219,7 @@ class MidiHandler:
                     if client_match:
                         current_client_id = client_match.group(1)
                         current_client_name = client_match.group(2)
+                        clients[current_client_id] = {'name': current_client_name}
                         continue
                     
                     port_match = port_line_pattern.search(line)
