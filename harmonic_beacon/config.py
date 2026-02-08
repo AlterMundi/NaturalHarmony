@@ -153,7 +153,7 @@ PAD_MODE_TOGGLE_NOTE = 8
 # Anchor Note: The MIDI note number of the Bottom-Left Pad (Pad 1)
 # Launchpad Programmer Mode starts at 0
 PAD_ANCHOR_NOTE = 0
-PAD_MODE_ENABLED_BY_DEFAULT = True
+PAD_MODE_ENABLED_BY_DEFAULT = False
 PANIC_NOTE = 111
 PAD_FEEDBACK_COLOR_ON = 60     # Launchpad Green (60=Green High)
 
