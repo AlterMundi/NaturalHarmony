@@ -49,6 +49,7 @@ class MidiHandler:
         port_pattern: Optional[str] = config.MIDI_PORT_PATTERN,
         f1_cc: int = config.F1_CC_NUMBER,
         debug: bool = False,
+        allow_virtual_fallback: bool = True,
     ):
         """Initialize the MIDI handler.
         
@@ -56,11 +57,12 @@ class MidiHandler:
             port_pattern: Substring to match in port names, or None for first port
             f1_cc: CC number used for f₁ modulation
             debug: If True, print raw MIDI messages to console
+            allow_virtual_fallback: If True, create virtual ports if physical ports fail
         """
         self.port_pattern = port_pattern
         self.f1_cc = f1_cc
         self.debug = debug
-        self.debug = debug
+        self.allow_virtual_fallback = allow_virtual_fallback
         self._ports: list[mido.ports.BaseInput] = []
         self._output_ports: list[mido.ports.BaseOutput] = []
         self._port_names: list[str] = []
@@ -76,20 +78,18 @@ class MidiHandler:
         """
         available_ports = mido.get_input_names()
         
-        # ... (same port filtering logic as before) ...
-        # (This tool call only lets me replace contiguous blocks, and the open() method is huge)
-        # I will focus on where the fallback happens.
-        
         self._ports = []
         self._port_names = []
         self._output_ports = []
         
-        # Try to open physical ports first (same logic)
+        # Try to open physical ports first
+        found_physical = False
         for name in available_ports:
-            # ... (filtering) ...
+            # Filter by port pattern if specified
             if self.port_pattern and self.port_pattern.lower() not in name.lower():
                 continue
-            # ... (system port skipping) ...
+            
+            # Skip system ports
             lower_name = name.lower()
             if "midi through" in lower_name or "rtmidi" in lower_name:
                  continue
@@ -98,8 +98,9 @@ class MidiHandler:
                 in_port = mido.open_input(name)
                 self._ports.append(in_port)
                 self._port_names.append(name)
+                found_physical = True
                 
-                # Feedback Output Port Logic (same as before)
+                # Try to open output port with same name for feedback
                 try:
                     output_ports = mido.get_output_names()
                     if name in output_ports:
@@ -112,7 +113,12 @@ class MidiHandler:
 
         if not self._ports:
              # If we tried to filter but found nothing, or just failed to open anything
+             
+             if not self.allow_virtual_fallback:
+                 raise RuntimeError(f"Could not open any MIDI ports matching '{self.port_pattern}' (Virtual Fallback Disabled).")
+                 
              print("Warning: Could not open any physical MIDI ports (likely busy).")
+
              
              # Check for VirMIDI ports (Zynthian integration)
              # "VirMIDI" usually appears as an OUTPUT port (destination) in mido.get_output_names()

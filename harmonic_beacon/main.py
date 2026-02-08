@@ -143,7 +143,11 @@ class HarmonicBeacon:
         self.modulation_port_pattern = modulation_port_pattern
         self.secondary_midi: Optional[MidiHandler] = None
         if modulation_port_pattern:
-            self.secondary_midi = MidiHandler(port_pattern=modulation_port_pattern, debug=midi_debug)
+            self.secondary_midi = MidiHandler(
+                port_pattern=modulation_port_pattern, 
+                debug=midi_debug,
+                allow_virtual_fallback=False
+            )
         self.osc: OscSender = MockOscSender(verbose=verbose) if mock_osc else OscSender(broadcast=broadcast)
         self.voices = VoiceTracker()
         self.f1 = F1Modulator()
