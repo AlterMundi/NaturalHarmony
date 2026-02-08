@@ -166,66 +166,70 @@ class MidiHandler:
             print("[MIDI] Auto-connecting physical ports to HarmonicBeacon...")
             
             # Get list of clients from aconnect
+            # aconnect -l output format:
+            # client 14: 'Midi Through' [type=kernel]
+            #     0 'Midi Through Port-0'
             result = subprocess.run(['aconnect', '-l'], capture_output=True, text=True)
             output = result.stdout
             
-            # Regex to find client ID and name
-            # client 28: 'Keystation 49' [type=kernel,card=3]
-            client_pattern = re.compile(r"client (\d+): '([^']+)'")
+            # Regex patterns
+            client_start_pattern = re.compile(r"^client (\d+): '([^']+)'")
+            port_line_pattern = re.compile(r"^\s+(\d+) '([^']+)'")
             
-            # Find our virtual port ID
             my_client_id = None
-            for match in client_pattern.finditer(output):
-                client_id, name = match.groups()
-                if "HarmonicBeacon" in name: # Logic to find our own port
-                    # In python-rtmidi/ALSA, the client name usually matches the python process or similar
-                    # But the PORT name we passed is 'HarmonicBeacon Input'
-                    # Let's iterate ports to be safe
-                    pass
-
-            # Since 'aconnect -l' output structure is hierarchical (client -> ports), 
-            # let's parse a bit more robustly or just try to connect by name if possible.
-            # actually, aconnect -l shows:
-            # client 128: 'HarmonicBeacon Input' [type=user,pid=12345]
-            #     0 'HarmonicBeacon Input'
-            
-            # Let's simple try to find the ID of 'HarmonicBeacon Input'
-            # and IDs of potential controllers.
-            
             my_port_id = None
+            source_clients = []
             
-            # Simple parsing of aconnect -l output line by line
-            current_client = None
-            
-            controllers = []
+            current_client_id = None
+            current_client_name = ""
             
             lines = output.splitlines()
             for line in lines:
-                if line.startswith("client "):
-                    # New client
-                    match = client_pattern.search(line)
-                    if match:
-                        current_client = match.group(1)
-                        client_name = match.group(2)
+                # Check for client line
+                client_match = client_start_pattern.search(line)
+                if client_match:
+                    current_client_id = client_match.group(1)
+                    current_client_name = client_match.group(2)
+                    continue
+                
+                # Check for port line
+                port_match = port_line_pattern.search(line)
+                if port_match and current_client_id:
+                    port_num = port_match.group(1)
+                    port_name = port_match.group(2)
+                    
+                    full_port_id = f"{current_client_id}:{port_num}"
+                    
+                    # Check if this is OUR virtual input port
+                    if "HarmonicBeacon Input" in port_name:
+                        my_client_id = current_client_id
+                        my_port_id = full_port_id
+                    
+                    # Check if this is a potential source (hardware controller)
+                    # Exclude:
+                    # - System Timer/Announce (usually client 0)
+                    # - Midi Through (usually client 14)
+                    # - Our own ports (to avoid feedback loops if we somehow catch them)
+                    elif (current_client_id != "0" and 
+                          "Midi Through" not in current_client_name and
+                          "HarmonicBeacon" not in port_name and 
+                          "RtMidi" not in current_client_name): # Python-rtmidi often names the client RtMidi
                         
-                        if "HarmonicBeacon Input" in client_name:
-                            my_port_id = f"{current_client}:0"
-                        elif "Midi Through" in client_name:
-                            continue # Skip Midi Through
-                        elif "Timer" in client_name or "Announce" in client_name:
-                            continue
-                        else:
-                            # Potential controller
-                            # We assume the first port (0) is the output for now
-                            controllers.append(f"{current_client}:0")
-            
+                        source_clients.append(full_port_id)
+
             if my_port_id:
                 print(f"[MIDI] Found virtual input at {my_port_id}")
-                for ctrl in controllers:
-                    print(f"[MIDI] Connecting {ctrl} -> {my_port_id}")
-                    subprocess.run(['aconnect', ctrl, my_port_id], capture_output=True)
+                if not source_clients:
+                    print("[MIDI] No other MIDI sources found to connect.")
+                
+                for source in source_clients:
+                    print(f"[MIDI] Connecting {source} -> {my_port_id}")
+                    subprocess.run(['aconnect', source, my_port_id], capture_output=True)
             else:
-                print("[MIDI] Could not determine ID of virtual port, auto-connect failed.")
+                print("[MIDI] Could not find 'HarmonicBeacon Input' in aconnect output. Auto-connect failed.")
+                # Debug info
+                print("[MIDI] Raw aconnect output for debugging:")
+                print(output)
                 
         except Exception as e:
             print(f"[MIDI] Auto-connect failed: {e}")
