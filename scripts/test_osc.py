@@ -17,9 +17,9 @@ sys.path.insert(0, '/home/nicolas/OS_projects/NaturalHarmony')
 from harmonic_beacon import config
 
 try:
-    import pyliblo3 as liblo
+    from pythonosc import udp_client
 except ImportError:
-    print("ERROR: pyliblo3 not installed. Run: pip install pyliblo3")
+    print("ERROR: python-osc not installed. Run: pip install python-osc")
     sys.exit(1)
 
 
@@ -37,25 +37,25 @@ def test_osc_connection():
     print()
     
     # Create OSC target
-    target = liblo.Address(config.OSC_HOST, config.OSC_PORT)
+    client = udp_client.SimpleUDPClient(config.OSC_HOST, config.OSC_PORT)
     
     # Test 1: Simple frequency note
     print("Test 1: Playing A4 (440 Hz) for 1 second...")
     print("  Sending: /fnote 440.0 100.0")
-    liblo.send(target, "/fnote", ("f", 440.0), ("f", 100.0))
+    client.send_message("/fnote", [440.0, 100.0])
     time.sleep(1.0)
     print("  Sending: /fnote 440.0 0.0  (velocity 0 = note off)")
-    liblo.send(target, "/fnote", ("f", 440.0), ("f", 0.0))
+    client.send_message("/fnote", [440.0, 0.0])
     time.sleep(0.5)
     
     # Test 2: Frequency note with noteID
     print("\nTest 2: Playing C4 (261.63 Hz) with noteID for 1 second...")
     note_id = 12345.0
     print(f"  Sending: /fnote 261.63 100.0 {note_id}")
-    liblo.send(target, "/fnote", ("f", 261.63), ("f", 100.0), ("f", note_id))
+    client.send_message("/fnote", [261.63, 100.0, note_id])
     time.sleep(1.0)
     print(f"  Sending: /fnote/rel 261.63 0.0 {note_id}")
-    liblo.send(target, "/fnote/rel", ("f", 261.63), ("f", 0.0), ("f", note_id))
+    client.send_message("/fnote/rel", [261.63, 0.0, note_id])
     time.sleep(0.5)
     
     # Test 3: Harmonic series demonstration
@@ -65,14 +65,14 @@ def test_osc_connection():
     for n in harmonics:
         freq = f1 * n
         print(f"  Harmonic {n}: {freq:.1f} Hz")
-        liblo.send(target, "/fnote", ("f", freq), ("f", 100.0))
+        client.send_message("/fnote", [freq, 100.0])
         time.sleep(0.4)
-        liblo.send(target, "/fnote", ("f", freq), ("f", 0.0))
+        client.send_message("/fnote", [freq, 0.0])
         time.sleep(0.1)
     
     # Test 4: All notes off
     print("\nTest 4: Sending /allnotesoff...")
-    liblo.send(target, "/allnotesoff")
+    client.send_message("/allnotesoff", [])
     
     print("\n" + "=" * 50)
     print("Did you hear the notes?")
