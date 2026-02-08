@@ -268,55 +268,68 @@ class MidiHandler:
                                     src_client = source.split(':')[0]
                                     dest_client = my_port_id.split(':')[0]
                                     
-                                    # Guess JACK Port Names based on Zynthian conventions
-                                    # Source: system:midi_capture_{client_id} (Hardware via ALSA)
-                                    # Dest: a2j:RtMidiIn Client [{client_id}] (Software via a2jmidid)
+                                    # ROBUST JACK LOOKUP
+                                    # 1. Start with jack_lsp -A (aliases) to find the true system port for this ALSA client
+                                    # We are looking for "system:midi_capture_X" that corresponds to ALSA Client X
+                                    # But Zynthian/a2j map them via ZynMidiRouter or direct system ports.
+                                    # SAFEST BET: Look for the ALSA Name in the jack_lsp output? No, jack_lsp only shows JACK names.
+                                    # But wait! 'jack_lsp -A -c' shows aliases.
+                                    # ALSA-JACK bridges often alias "system:midi_capture_X" to "KeyLab mkII 61:MIDI 1"
                                     
-                                    jack_src = f"system:midi_capture_{src_client}"
+                                    # Let's get full info
+                                    jack_res = subprocess.run(['jack_lsp', '-A', '-c'], capture_output=True, text=True)
+                                    jack_lines = jack_res.stdout.splitlines()
                                     
-                                    # Find exact Dest name from jack_lsp
-                                    jack_res = subprocess.run(['jack_lsp'], capture_output=True, text=True)
-                                    jack_ports = jack_res.stdout.splitlines()
-                                    
+                                    jack_src = None
                                     jack_dest = None
-                                    # Look for a port containing our client ID and "playback" (which is Input in a2j-speak usually)
-                                    # Actually, let's look for "RtMidiIn Client [{dest_client}]"
-                                    search_str = f"RtMidiIn Client [{dest_client}]"
-                                    for p in jack_ports:
-                                        if search_str in p and "playback" in p.lower(): 
-                                            # "playback" in JACK usually means OUTPUT, but a2j is weird.
-                                            # In the user log: a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input
-                                            # Yes, that is the one we want to connect TO?
-                                            # Wait.
-                                            # JACK Source (Output) -> JACK Sink (Input).
-                                            # system:midi_capture_X is a Source.
-                                            # a2j:... (playback) often means it's an ALSA Playback port, so it consumes MIDI from ALSA 
-                                            # and outputs to JACK? OR it consumes MIDI from JACK and plays to ALSA?
-                                            # "playback" (ALSA) -> CONSUMES data from app -> SENDS to Hardware/Graph.
-                                            # "capture" (ALSA) -> PRODUCES data from Hardware -> SENDS to App.
-                                            
-                                            # Let's re-read the log:
-                                            # a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input
-                                            # This is an ALSA INPUT port (we read from it).
-                                            # So a2j exposes it as a JACK OUTPUT (Source)?? No, that would make no sense.
-                                            # Unless... we want to WRITE to it.
-                                            # We want KeyLab (Source) -> Beacon (Sink).
-                                            # Beacon is an ALSA Input.
-                                            # a2j usually exposes ALSA Inputs as JACK Ports that you can CONNECT TO (Sinks).
-                                            # Let's assume this is the Sink.
-                                            jack_dest = p
-                                            break
                                     
-                                    if jack_dest:
+                                    # Finding Source (Harvesting from ALSA client ID)
+                                    # We know the ALSA Client ID is 'src_client' (e.g. 28)
+                                    # We can try to guess "system:midi_capture_{src_client}" first as a heuristic
+                                    # But we must verify it exists.
+                                    # Also, sometimes it's mapped differently.
+                                    # A strict check: The port name usually contains "capture" and the number.
+                                    
+                                    # Better heuristic:
+                                    # In previous log: system:midi_capture_28   ZynMidiRouter:dev18_in
+                                    # It seems to match client ID exactly.
+                                    guess_src = f"system:midi_capture_{src_client}"
+                                    
+                                    # Finding Dest (Our App)
+                                    # We know our client ID 'dest_client' (e.g. 137)
+                                    # a2j names it: "a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input"
+                                    
+                                    for line in jack_lines:
+                                        # Only look at port definitions (lines not starting with whitespace)
+                                        if not line.startswith(' '):
+                                            port_name = line.strip()
+                                            
+                                            # Check Source candidate
+                                            if guess_src == port_name:
+                                                 jack_src = port_name
+                                            
+                                            # Check Dest candidate
+                                            # "a2j:RtMidiIn Client [137] (playback): HarmonicBeacon Input"
+                                            if f"RtMidiIn Client [{dest_client}]" in port_name and "playback" in port_name and "HarmonicBeacon Input" in port_name:
+                                                 jack_dest = port_name
+                                    
+                                    # If simple guess failed, try looking for aliases or partial matches?
+                                    # For Zynthian specifically, let's stick to the guess if we found it.
+                                    
+                                    if jack_src and jack_dest:
                                         print(f"[MIDI Monitor] Attempting JACK connection: {jack_src} -> {jack_dest}")
                                         jret = subprocess.run(['jack_connect', jack_src, jack_dest], capture_output=True)
+                                        
                                         if jret.returncode == 0:
                                             print(f"[MIDI Monitor] Successfully connected via JACK: {jack_src} -> {jack_dest}")
-                                            connected_sources.add(source) # Mark as connected so we don't retry locally
+                                            connected_sources.add(source)
                                         else:
-                                            pass # print(f"[MIDI Monitor] JACK connection failed: {jret.stderr}")
+                                            # Usually fails if already connected.
+                                            # print(f"[MIDI Monitor] JACK connection failed: {jret.stderr.strip()}")
+                                            pass
                                     else:
-                                        pass # print(f"[MIDI Monitor] Could not find JACK destination for client {dest_client}")
+                                        print(f"[MIDI Monitor] Could not resolve JACK ports for routing. Src: {jack_src}, Dest: {jack_dest}")
+
 
                                 except Exception as e:
                                     print(f"[MIDI Monitor] JACK fallback error: {e}")
