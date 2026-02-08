@@ -91,7 +91,7 @@ class MidiHandler:
             
             # Skip system ports
             lower_name = name.lower()
-            if "midi through" in lower_name or "rtmidi" in lower_name:
+            if "midi through" in lower_name or "rtmidi" in lower_name or "virmidi" in lower_name or "virtual raw midi" in lower_name:
                  continue
             
             try:
