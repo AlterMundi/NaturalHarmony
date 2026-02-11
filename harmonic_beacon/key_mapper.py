@@ -140,12 +140,14 @@ class KeyMapper:
                     best_local_n = n
             
             # 4. Select Best Match
-            # "Pick the option with less deviation"
+            # Local matching is DISABLED (forced to False) to prioritize simple harmonic ratios
+            # over microtonal accuracy. This ensures consistent musical intervals based on
+            # the chromatic prototypes (e.g., E always maps to n=5, perfect major third).
+            # If enabled, local matching would find the nearest harmonic to 12TET pitch,
+            # but this creates inconsistent interval relationships across the keyboard.
             use_local = False
-            # Force Prototype usage to prioritize simple ratios over microtonal accuracy
-            if best_local_n is not None and False: # Disabled for now
-                if abs(best_local_dev) < abs(proto_cents):
-                    use_local = True
+            # Disabled: if best_local_n is not None and abs(best_local_dev) < abs(proto_cents):
+            #     use_local = True
             
             if use_local and best_local_n is not None:
                 # Local match wins

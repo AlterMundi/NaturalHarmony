@@ -424,12 +424,37 @@ class MockOscSender(OscSender):
     
     # Broadcast stubs (no-op in mock mode)
     def broadcast_f1(self, hz: float) -> None:
+        """Mock broadcast f1 (no-op)."""
         pass
-    
+
     def broadcast_anchor(self, midi_note: int) -> None:
+        """Mock broadcast anchor (no-op)."""
         pass
-    
+
+    def broadcast_voice_on(self, voice_id: int, freq: float, gain: float, source_note: int, harmonic_n: int) -> None:
+        """Mock broadcast voice on (no-op)."""
+        pass
+
+    def broadcast_voice_off(self, voice_id: int) -> None:
+        """Mock broadcast voice off (no-op)."""
+        pass
+
+    def broadcast_voice_freq(self, voice_id: int, freq: float) -> None:
+        """Mock broadcast voice frequency update (no-op)."""
+        pass
+
+    def broadcast_key_on(self, note: int, velocity: int) -> None:
+        """Mock broadcast key on (no-op)."""
+        pass
+
+    def broadcast_key_off(self, note: int) -> None:
+        """Mock broadcast key off (no-op)."""
+        pass
+
+    def broadcast_cc(self, cc_num: int, value: int) -> None:
+        """Mock broadcast CC (no-op)."""
         pass
 
     def broadcast_pad_mode(self, enabled: bool) -> None:
+        """Mock broadcast pad mode (no-op)."""
         pass

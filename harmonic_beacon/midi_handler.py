@@ -60,7 +60,6 @@ class MidiHandler:
         self.port_pattern = port_pattern
         self.f1_cc = f1_cc
         self.debug = debug
-        self.debug = debug
         self._ports: list[mido.ports.BaseInput] = []
         self._output_ports: list[mido.ports.BaseOutput] = []
         self._port_names: list[str] = []
