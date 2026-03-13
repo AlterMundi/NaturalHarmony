@@ -1,5 +1,12 @@
 # NaturalHarmony
 
+## Agent Skills & Tool Discovery
+
+> **When invoked through VS Code / Antigravity chat:** globally installed skills live at `~/.claude/skills/`. Check there before searching the project tree. The Lattice skill (primary task-tracking tool for this project) is at `~/.claude/skills/lattice/SKILL.md` — read it before doing any Lattice work. A project-local copy is also at `skills/lattice/SKILL.md`.
+
+Skills currently installed globally:
+- **Lattice** (`~/.claude/skills/lattice/SKILL.md`) — file-based task tracker. Mandatory for all work on this project.
+
 ## Lattice
 
 > **MANDATORY: This project has Lattice initialized (`.lattice/` exists). You MUST use Lattice to track all work. Creating tasks, updating statuses, and following the workflow below is not optional — it is a hard requirement. Failure to track work in Lattice is a coordination failure: other agents and humans cannot see, build on, or trust untracked work. If you are about to write code and no Lattice task exists for it, stop and create one first.**
