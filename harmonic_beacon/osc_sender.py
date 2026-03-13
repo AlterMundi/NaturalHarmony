@@ -284,6 +284,12 @@ class OscSender:
             "/beacon/mode/pad", 
             [1 if enabled else 0]
         )
+
+    def broadcast_panic(self) -> None:
+        """Broadcast panic to visualizer and shaper."""
+        if self._broadcast_client is None:
+            return
+        self._broadcast_client.send_message("/beacon/panic", [])
     
     @property
     def is_open(self) -> bool:
@@ -457,4 +463,8 @@ class MockOscSender(OscSender):
 
     def broadcast_pad_mode(self, enabled: bool) -> None:
         """Mock broadcast pad mode (no-op)."""
+        pass
+
+    def broadcast_panic(self) -> None:
+        """Mock broadcast panic (no-op)."""
         pass

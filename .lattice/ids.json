@@ -1,5 +1,19 @@
 {
-  "map": {},
-  "next_seqs": {},
+  "map": {
+    "NH-1": "task_01KKJJ2J9G96MSX87RZ4ZR5HWT",
+    "NH-10": "task_01KKJPW7FXWPAPR251EYRE33K1",
+    "NH-11": "task_01KKJQ49DRKXXDKMHFBFNKKVJQ",
+    "NH-2": "task_01KKJJ2JFR9TXHJZMJ9X3DMG6X",
+    "NH-3": "task_01KKJJ2JP1VT3H5F2QENBCF3NV",
+    "NH-4": "task_01KKJJ2JW9NCSJHV94P7PAM1W7",
+    "NH-5": "task_01KKJJ2K2P61RE5J31Q6JAYQJD",
+    "NH-6": "task_01KKJJ2K90ME19CGRT823CH3RW",
+    "NH-7": "task_01KKJJ2KF83VFM9N1P2PY0Q7MX",
+    "NH-8": "task_01KKJJ2KNV569Z6BPSKY36YSWH",
+    "NH-9": "task_01KKJP08AXTG5J5WKYVQ1F9PWB"
+  },
+  "next_seqs": {
+    "NH": 12
+  },
   "schema_version": 2
 }

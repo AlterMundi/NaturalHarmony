@@ -196,6 +196,10 @@ class HarmonicBeacon:
         
         self.running = True
         
+        # Broadcast initial state to sync UI/Shaper
+        self.osc.broadcast_f1(self.f1.target)
+        self.osc.broadcast_anchor(self._key_mapper.anchor_midi)
+        
     def stop(self) -> None:
         """Stop the Harmonic Beacon and release all resources."""
         self.running = False
@@ -264,6 +268,7 @@ class HarmonicBeacon:
         self.voices.clear()
         self._note_lfos.clear()
         self.osc.send_all_notes_off()
+        self.osc.broadcast_panic()
         if self.mpe_enabled and self.mpe is not None:
             self.mpe.send_all_notes_off()
 

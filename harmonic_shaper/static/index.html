@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harmonic Shaper — Cymatic Control</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg:        #0a0a12;
+    --surface:   #111120;
+    --panel:     #181828;
+    --border:    #252540;
+    --accent:    #6c63ff;
+    --accent2:   #00d4aa;
+    --warn:      #ff6b6b;
+    --text:      #e0e0f0;
+    --muted:     #6060a0;
+    --active:    #00ff99;
+    --gain-col:  #6c63ff;
+    --pan-col:   #f7a400;
+    --phase-col: #00d4aa;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ─────────────────────────────────────────────────── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--warn);
+    transition: background 0.3s;
+    flex-shrink: 0;
+  }
+  .status-dot.connected { background: var(--active); box-shadow: 0 0 8px var(--active); }
+  .status-label { font-size: 12px; color: var(--muted); }
+  .f1-display {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--accent2);
+  }
+
+  /* ── Toolbar ─────────────────────────────────────────────────── */
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    padding: 10px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.danger { border-color: var(--warn); color: var(--warn); }
+  .btn.danger:hover { background: rgba(255,107,107,0.1); }
+  .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .session-input {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    color: var(--text);
+    font-size: 12px;
+    width: 180px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .session-input:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Mixer channels ──────────────────────────────────────────── */
+  main {
+    flex: 1;
+    padding: 24px;
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .channel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 16px;
+    width: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .channel.active {
+    border-color: var(--active);
+    box-shadow: 0 0 16px rgba(0, 255, 153, 0.12);
+  }
+
+  .channel-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .harmonic-label {
+    font-size: 22px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent);
+  }
+  .active-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  .active .active-dot {
+    background: var(--active);
+    box-shadow: 0 0 6px var(--active);
+  }
+  .freq-label {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    min-height: 14px;
+  }
+
+  /* ── Gain fader ──────────────────────────────────────────────── */
+  .fader-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .param-label {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .fader-track {
+    position: relative;
+    width: 28px;
+    height: 140px;
+    background: var(--surface);
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .fader-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-radius: 14px;
+    background: linear-gradient(0deg, var(--gain-col), rgba(108,99,255,0.3));
+    transition: height 0.05s;
+    pointer-events: none;
+  }
+  .fader-track input[type=range] {
+    position: absolute;
+    width: 140px;
+    height: 28px;
+    top: 56px;
+    left: -56px;
+    transform: rotate(-90deg);
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+  }
+  .fader-track input[type=range]::-webkit-slider-thumb { appearance: none; }
+  .fader-value {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--gain-col);
+    min-width: 38px;
+    text-align: center;
+  }
+
+  /* ── Pan bar ─────────────────────────────────────────────────── */
+  .pan-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+  .pan-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--surface);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    position: relative;
+    cursor: pointer;
+  }
+  .pan-fill {
+    position: absolute;
+    top: 0; bottom: 0;
+    background: var(--pan-col);
+    border-radius: 4px;
+    transition: left 0.05s, right 0.05s;
+  }
+  .pan-center-mark {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: -2px;
+    bottom: -2px;
+    width: 1px;
+    background: var(--border);
+    pointer-events: none;
+  }
+  .pan-wrap input[type=range] {
+    width: 100%;
+    appearance: none;
+    background: transparent;
+    height: 20px;
+    cursor: pointer;
+  }
+  .pan-wrap input[type=range]::-webkit-slider-thumb { appearance: none; }
+  .pan-value {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--pan-col);
+    min-width: 50px;
+    text-align: center;
+  }
+
+  /* ── Phase knob ──────────────────────────────────────────────── */
+  .phase-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .knob-svg { cursor: pointer; }
+  .phase-value {
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--phase-col);
+    min-width: 44px;
+    text-align: center;
+  }
+  .phase-wrap input[type=range] {
+    width: 100%;
+    appearance: none;
+    background: transparent;
+    height: 20px;
+    cursor: pointer;
+  }
+  .phase-wrap input[type=range]::-webkit-slider-thumb { appearance: none; }
+
+  /* ── Footer ──────────────────────────────────────────────────── */
+  footer {
+    padding: 8px 24px;
+    font-size: 11px;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 16px;
+    background: var(--surface);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="status-dot" id="statusDot"></div>
+  <h1>⬡ HARMONIC SHAPER</h1>
+  <span class="status-label" id="statusLabel">Connecting…</span>
+  <span class="f1-display" id="f1Display">f₁ = —</span>
+</header>
+
+<div class="toolbar">
+  <button class="btn danger" onclick="panic()">⚠ PANIC</button>
+  <span style="width:1px;height:20px;background:var(--border);"></span>
+  <input class="session-input" id="expId" type="text" placeholder="experiment_id" value="manual">
+  <button class="btn" id="recBtn" onclick="toggleRecord()">⏺ Record</button>
+  <span style="flex:1"></span>
+  <button class="btn" onclick="resetAll()">Reset All</button>
+</div>
+
+<main id="mixer"></main>
+
+<footer>
+  <span>Minilab3: Sliders=Gain, Top Knobs=Pan, Bottom Knobs=Phase (Upper 4 Harmonics)</span>
+  <span>|</span>
+  <span>REST: PUT /api/harmonic/{n}  ·  POST /api/panic</span>
+</footer>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let state = { f1: 65.0, voices: {} };
+let ws = null;
+let recording = false;
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('statusDot').classList.add('connected');
+    document.getElementById('statusLabel').textContent = 'Connected';
+  };
+  ws.onclose = () => {
+    document.getElementById('statusDot').classList.remove('connected');
+    document.getElementById('statusLabel').textContent = 'Disconnected — retrying…';
+    setTimeout(connect, 2000);
+  };
+  ws.onmessage = (e) => {
+    state = JSON.parse(e.data);
+    render();
+  };
+}
+
+function render() {
+  document.getElementById('f1Display').textContent = `f₁ = ${state.f1.toFixed(1)} Hz`;
+
+  const voices = state.voices || {};
+  const mixer = document.getElementById('mixer');
+
+  const ns = Object.keys(voices).map(Number).sort((a,b)=>a-b);
+
+  // Create/update channels
+  ns.forEach(n => {
+    let ch = document.getElementById(`ch-${n}`);
+    if (!ch) {
+      ch = createChannel(n);
+      mixer.appendChild(ch);
+    }
+    updateChannel(ch, n, voices[String(n)]);
+  });
+
+  // Remove channels no longer in state
+  Array.from(mixer.children).forEach(el => {
+    const n = parseInt(el.id.replace('ch-',''));
+    if (!voices[String(n)]) el.remove();
+  });
+}
+
+function createChannel(n) {
+  const div = document.createElement('div');
+  div.className = 'channel';
+  div.id = `ch-${n}`;
+  div.innerHTML = `
+    <div class="channel-header">
+      <div class="harmonic-label">H${n}</div>
+      <div class="active-dot" id="dot-${n}"></div>
+      <div class="freq-label" id="freq-${n}">—</div>
+    </div>
+
+    <div class="fader-wrap">
+      <div class="param-label">Gain</div>
+      <div class="fader-track" id="ftrack-${n}">
+        <div class="fader-fill" id="ffill-${n}"></div>
+        <input type="range" min="0" max="1" step="0.001" value="0.8"
+               id="gain-${n}" oninput="sendParam(${n},'gain',this.value)">
+      </div>
+      <div class="fader-value" id="gval-${n}">0.80</div>
+    </div>
+
+    <div class="pan-wrap">
+      <div class="param-label">Pan</div>
+      <div class="pan-bar" id="panbar-${n}">
+        <div class="pan-fill" id="panfill-${n}"></div>
+        <div class="pan-center-mark"></div>
+      </div>
+      <input type="range" min="-1" max="1" step="0.01" value="0"
+             id="pan-${n}" oninput="sendParam(${n},'pan',this.value)">
+      <div class="pan-value" id="pval-${n}">C</div>
+    </div>
+
+    <div class="phase-wrap">
+      <div class="param-label">Phase</div>
+      <svg class="knob-svg" width="60" height="60" id="knobsvg-${n}">
+        <circle cx="30" cy="30" r="24" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
+        <path id="karc-${n}" stroke="var(--phase-col)" stroke-width="3" fill="none" stroke-linecap="round" d=""/>
+        <circle r="4" cx="30" cy="10" fill="var(--phase-col)" id="kdot-${n}"/>
+      </svg>
+      <input type="range" min="0" max="360" step="1" value="0"
+             id="phase-${n}" oninput="sendParam(${n},'phase_deg',this.value)">
+      <div class="phase-value" id="phval-${n}">0°</div>
+    </div>
+  `;
+  return div;
+}
+
+function updateChannel(ch, n, v) {
+  const active = v.active;
+  ch.classList.toggle('active', active);
+
+  document.getElementById(`freq-${n}`).textContent =
+    v.freq > 0 ? `${v.freq.toFixed(1)} Hz` : '—';
+
+  // Gain
+  const gainEl = document.getElementById(`gain-${n}`);
+  if (!gainEl.matches(':active')) gainEl.value = v.gain;
+  document.getElementById(`ffill-${n}`).style.height = `${v.gain * 100}%`;
+  document.getElementById(`gval-${n}`).textContent = v.gain.toFixed(2);
+
+  // Pan
+  const panEl = document.getElementById(`pan-${n}`);
+  if (!panEl.matches(':active')) panEl.value = v.pan;
+  const panNorm = (v.pan + 1) / 2;
+  const fill = document.getElementById(`panfill-${n}`);
+  if (v.pan >= 0) {
+    fill.style.left  = '50%';
+    fill.style.right = `${(1 - panNorm) * 100}%`;
+  } else {
+    fill.style.left  = `${panNorm * 100}%`;
+    fill.style.right = '50%';
+  }
+  const panLabel = v.pan === 0 ? 'C'
+    : v.pan < 0 ? `L${(-v.pan * 100).toFixed(0)}`
+    : `R${(v.pan * 100).toFixed(0)}`;
+  document.getElementById(`pval-${n}`).textContent = panLabel;
+
+  // Phase knob
+  const phaseEl = document.getElementById(`phase-${n}`);
+  if (!phaseEl.matches(':active')) phaseEl.value = v.phase_deg;
+  document.getElementById(`phval-${n}`).textContent = `${Math.round(v.phase_deg)}°`;
+  drawKnob(n, v.phase_deg);
+}
+
+function drawKnob(n, deg) {
+  const cx = 30, cy = 30, r = 22;
+  const startDeg = -225;
+  const endDeg = startDeg + (deg / 360) * 270;
+  const toRad = d => d * Math.PI / 180;
+
+  const sx = cx + r * Math.cos(toRad(startDeg));
+  const sy = cy + r * Math.sin(toRad(startDeg));
+  const ex = cx + r * Math.cos(toRad(endDeg));
+  const ey = cy + r * Math.sin(toRad(endDeg));
+  const large = (endDeg - startDeg) > 180 ? 1 : 0;
+
+  const arc = document.getElementById(`karc-${n}`);
+  if (arc) {
+    if (deg < 1) {
+      arc.setAttribute('d', '');
+    } else {
+      arc.setAttribute('d', `M${sx},${sy} A${r},${r} 0 ${large},1 ${ex},${ey}`);
+    }
+  }
+
+  // Rotate indicator dot
+  const dot = document.getElementById(`kdot-${n}`);
+  if (dot) {
+    const angle = -225 + (deg / 360) * 270;
+    const dx = cx + 20 * Math.cos(toRad(angle));
+    const dy = cy + 20 * Math.sin(toRad(angle));
+    dot.setAttribute('cx', dx.toFixed(2));
+    dot.setAttribute('cy', dy.toFixed(2));
+  }
+}
+
+// ── Control actions ───────────────────────────────────────────────────────────
+const pending = {};
+function sendParam(n, param, value) {
+  clearTimeout(pending[`${n}_${param}`]);
+  pending[`${n}_${param}`] = setTimeout(() => {
+    const body = {};
+    body[param] = parseFloat(value);
+    fetch(`/api/harmonic/${n}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+  }, 16);
+}
+
+function panic() {
+  if (!confirm('Reset all harmonic parameters?')) return;
+  fetch('/api/panic', { method: 'POST' });
+}
+
+function resetAll() {
+  const voices = state.voices || {};
+  Object.keys(voices).forEach(n => {
+    fetch(`/api/harmonic/${n}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ gain: 0.8, pan: 0.0, phase_deg: 0.0 }),
+    });
+  });
+}
+
+function toggleRecord() {
+  const btn = document.getElementById('recBtn');
+  if (!recording) {
+    const expId = document.getElementById('expId').value || 'manual';
+    fetch('/api/session/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ experiment_id: expId }),
+    }).then(r => r.json()).then(d => {
+      if (d.ok) {
+        recording = true;
+        btn.textContent = '⏹ Stop';
+        btn.classList.add('active');
+      }
+    });
+  } else {
+    fetch('/api/session/stop', { method: 'POST' }).then(() => {
+      recording = false;
+      btn.textContent = '⏺ Record';
+      btn.classList.remove('active');
+    });
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>
