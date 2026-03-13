@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import signal
 import time
 
 from .state import VoiceParameterStore
@@ -46,8 +47,17 @@ def main() -> None:
                             host=config.OSC_HOST)
     midi = Minilab3Control(store, port_pattern=config.MINILAB_PORT_PATTERN)
 
+    def _shutdown(signum, frame):
+        log.info("Signal %d received — shutting down cleanly...", signum)
+        store.panic()          # zero all voices immediately
+        audio.stop()           # close PortAudio stream before process dies
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGHUP,  _shutdown)
+
     audio.start()
-    
+
     if not args.no_osc:
         osc.start()
         
