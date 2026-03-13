@@ -154,7 +154,7 @@ PAD_MODE_TOGGLE_NOTE = 8
 # Launchpad Programmer Mode starts at 0
 PAD_ANCHOR_NOTE = 0
 PAD_MODE_ENABLED_BY_DEFAULT = True
-PANIC_NOTE = 111
+PANIC_NOTE = 120
 PAD_FEEDBACK_COLOR_ON = 60     # Launchpad Green (60=Green High)
 
 # Mapping Type: "LINEAR" (Sequential) or "LAUNCHPAD" (Row Stride 16)
