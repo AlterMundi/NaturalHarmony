@@ -17,7 +17,7 @@ The system uses **Optimized Chromatic** mapping, where each semitone maps to car
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/NaturalHarmony.git
+git clone https://github.com/<your-org-or-user>/NaturalHarmony.git
 cd NaturalHarmony
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -36,8 +36,8 @@ python -m harmonic_visualizer.main
 ### Harmonic Beacon
 
 - **Two Operating Modes:**
-  - **Keyboard Mode** (default): Chromatic mapping with optimized harmonic prototypes
-  - **Pad Mode**: Direct 1:1 mapping of 64 pads to harmonics 1-64
+  - **Keyboard Mode**: Chromatic mapping with optimized harmonic prototypes
+  - **Pad Mode** (startup default): Direct 1:1 mapping of 64 pads to harmonics 1-64
 
 - **Stacking Mode** (CC22): Play both transposed (pitch-correct) and natural (spectral) frequencies
 - **Split Mode** (Pad Mode only, CC104): Lower 4 rows momentary, upper 4 rows toggle/latch
@@ -48,7 +48,7 @@ python -m harmonic_visualizer.main
 
 ### Harmonic Visualizer
 
-- **Harmonic Spine**: Vertical display of harmonics 1-64 with glowing indicators
+- **Harmonic Spine**: Vertical display of active harmonic positions with glowing indicators
 - **Virtual Keyboard**: Shows pressed keys with highlighting
 - **Energy Lines**: Connect active keys to their harmonic positions
 - **CC Status Bar**: Real-time display of control values
@@ -245,7 +245,7 @@ Log out and back in for changes to take effect.
 
 1. Check controller is connected: `python -m harmonic_beacon.main --list-ports`
 2. On Linux, verify ALSA/JACK is configured
-3. Try specifying port pattern: `--port-pattern "KeyLab"`
+3. For filtered device matching, set `MIDI_PORT_PATTERN` in `harmonic_beacon/config.py`
 
 ### Surge XT not receiving notes
 

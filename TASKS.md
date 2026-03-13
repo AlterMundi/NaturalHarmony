@@ -1,29 +1,36 @@
-# The Harmonic Beacon – Development Status
+# Natural Harmony Task List
 
-## Completed Milestones
+## Current Status
+- Branch objective: complete refactor cleanup and align docs/tests with implementation.
+- Runtime critical mock crash fix: done.
+- Test suite modernization: done for `tests/`.
+- Documentation alignment: in progress.
 
-### Core Engine
-- [x] **Harmonic Calculations**: Exact frequency mapping ($f_n = n \times f_1$).
-- [x] **MIDI Handling**: Input processing with `mido` and `rtmidi`.
-- [x] **Polyphony**: Robust voice tracking and allocation.
-- [x] **Modulation**: Smooth real-time $f_1$ shifting via MIDI CC.
+## Completed
+- [x] Fix `MockOscSender` missing broadcast methods.
+- [x] Remove obsolete test modules referencing removed APIs.
+- [x] Add current KeyMapper-focused tests.
+- [x] Ensure `tests/` suite passes in project venv.
+- [x] Add project license file.
+- [x] Stop `pytest` from collecting hardware scripts via `pytest.ini`.
+- [x] Remove `.gitignore` conflict for tracked `TASKS.md`.
 
-### Modes
-- [x] **Keyboard Mode**: 12-semitone mapping based on intervals.
-- [x] **Pad Mode**: Direct mapping of Harmonics 1-64 on an 8x8 Grid.
-- [x] **Panic Button**: Emergency voice kill via CC 111 / Note 111.
+## In Progress
+- [ ] Final review for docs consistency across `README.md`, `SPEC.md`, and visualizer docs.
 
-### Hardware Integration
-- [x] **Arturia KeyLab 61 MkII**: Full support for keys and sliders.
-- [x] **Novation Launchpad Mini**: Pad Mode with LED feedback (Green).
-- [x] **Akai Force**: (Partial/tested) - Replaced by Launchpad for Pad Mode.
+## Next Priorities
+- [ ] Keep hardware scripts as operator tools (not CI tests).
+- [ ] Expand automated tests for visualizer OSC parsing and renderer-safe state updates.
+- [ ] Add a short `CHANGELOG.md` for the cleanup cycle.
+- [ ] Add optional CI command documentation (`./venv/bin/python -m pytest -q tests`).
 
-### Visualization
-- [x] **Harmonic Visualizer**: Real-time 3D OpenGL application.
-- [x] **Grid View**: Shows active pads/harmonics with frequencies.
-- [x] **OSC Broadcast**: Beacon broadcasts state to Visualizer.
+## Backlog
+- [ ] Preset save/load for mapping and f1 settings.
+- [ ] Additional LFO shapes and modulation routing.
+- [ ] MIDI recording/export workflow.
+- [ ] More robust multi-controller mapping profiles.
 
-## Future / Pending
-- [ ] Record MIDI output to file.
-- [ ] Save/Load presets for $f_1$ and mappings.
-- [ ] Advanced LFO shapes.
+## Verification Commands
+- `./venv/bin/python -m pytest -q tests`
+- `./venv/bin/python -m harmonic_beacon.main --help`
+- `./venv/bin/python -m harmonic_visualizer.main --help`

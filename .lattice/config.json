@@ -1,0 +1,98 @@
+{
+  "default_actor": "human:Nico",
+  "default_priority": "medium",
+  "default_status": "backlog",
+  "instance_id": "inst_01KKJ8WJ2TTDSCT9VHT3BP35YV",
+  "project_code": "NH",
+  "project_name": "Natural Harmony",
+  "schema_version": 1,
+  "task_types": [
+    "task",
+    "bug",
+    "spike",
+    "chore"
+  ],
+  "workflow": {
+    "descriptions": {
+      "backlog": "Task is captured but no work has started. No planning, no implementation.",
+      "blocked": "Work cannot proceed due to an external dependency or unresolved issue.",
+      "cancelled": "Work has been abandoned. No further action will be taken.",
+      "done": "Work is reviewed and shipped. No further action needed.",
+      "in_planning": "Design, dialogue, and scoping underway. No implementation code should be written yet.",
+      "in_progress": "Implementation is actively underway. Code is being written, tested, or integrated.",
+      "needs_human": "A human decision, approval, or input is required before work can continue.",
+      "planned": "Plan is written and approved. Ready for implementation but work has not started.",
+      "review": "Implementation is complete. Work is being reviewed before it can ship."
+    },
+    "roles": [
+      "review"
+    ],
+    "statuses": [
+      "backlog",
+      "in_planning",
+      "planned",
+      "in_progress",
+      "review",
+      "done",
+      "blocked",
+      "needs_human",
+      "cancelled"
+    ],
+    "transitions": {
+      "backlog": [
+        "in_planning",
+        "planned",
+        "cancelled"
+      ],
+      "blocked": [
+        "in_planning",
+        "planned",
+        "in_progress",
+        "cancelled"
+      ],
+      "cancelled": [],
+      "done": [],
+      "in_planning": [
+        "planned",
+        "needs_human",
+        "cancelled"
+      ],
+      "in_progress": [
+        "review",
+        "blocked",
+        "needs_human",
+        "cancelled"
+      ],
+      "needs_human": [
+        "in_planning",
+        "planned",
+        "in_progress",
+        "review",
+        "cancelled"
+      ],
+      "planned": [
+        "in_progress",
+        "review",
+        "blocked",
+        "needs_human",
+        "cancelled"
+      ],
+      "review": [
+        "done",
+        "in_progress",
+        "in_planning",
+        "needs_human",
+        "cancelled"
+      ]
+    },
+    "universal_targets": [
+      "needs_human",
+      "cancelled"
+    ],
+    "wip_limits": {
+      "in_progress": 10,
+      "review": 5
+    }
+  },
+  "workflow_preset": "classic"
+}
