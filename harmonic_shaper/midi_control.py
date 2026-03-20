@@ -104,6 +104,12 @@ class Minilab3Control:
     def _handle_cc(self, cc: int, value: int) -> None:
         norm = value / 127.0
 
+        # Modwheel — master gain
+        if cc == 1:
+            self._store.set_master_gain(norm)
+            log.debug("Modwheel → master gain=%.3f (cc=%d val=%d)", norm, cc, value)
+            return
+
         matched = (
             cc in self._slider_to_slot
             or cc in self._pan_to_slot

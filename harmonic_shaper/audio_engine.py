@@ -141,6 +141,7 @@ class AudioEngine:
         for n in [k for k in list(self._phase_acc) if k not in voices]:
             del self._phase_acc[n]
 
+        mix *= self._store.get_master_gain()
         np.clip(mix, -1.0, 1.0, out=mix)
         outdata[:] = mix
 

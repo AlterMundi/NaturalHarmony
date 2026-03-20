@@ -45,6 +45,7 @@ class VoiceParameterStore:
         # Chronological list of active harmonic_n values to enforce 5-voice polyphony (note stealing)
         self._active_history: list[int] = []
         self.f1: float = 65.0       # Base frequency
+        self._master_gain: float = 1.0
         self._on_change = on_change
 
     # ─── Internal helpers ─────────────────────────────────────────────────────
@@ -134,6 +135,12 @@ class VoiceParameterStore:
             if "phase_deg" in kwargs:
                 v.phase = math.radians(float(kwargs["phase_deg"]) % 360)
         self._notify()
+
+    def set_master_gain(self, gain: float) -> None:
+        self._master_gain = max(0.0, min(1.0, gain))
+
+    def get_master_gain(self) -> float:
+        return self._master_gain
 
     def panic(self) -> None:
         """Reset all gains to 0.8, pan/phase to 0, mark inactive."""
