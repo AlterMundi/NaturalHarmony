@@ -27,7 +27,8 @@ class BeaconClient:
     Physical tines continue resonating naturally during the brief stop gap
     (~5-10ms on LAN), so the interruption is imperceptible.
 
-    Phase is stubbed at 0 until firmware HAB-3 (LEDC hpoint) ships.
+    Phase (degrees 0-360) is sent per-tine in the play payload; the firmware
+    applies it as LEDC hpoint so excitation cycles are offset in hardware.
     """
 
     def __init__(
@@ -96,8 +97,8 @@ class BeaconClient:
             tines_payload.append({
                 "index": idx,
                 "vel": vel,
-                "dur": 0,       # infinite sustain
-                # phase stubbed at 0 — firmware HAB-3 will wire this up
+                "dur": 0,           # infinite sustain
+                "phase": params.phase,  # degrees 0-360, maps to LEDC hpoint
             })
 
         self._post("/api/play", {
