@@ -41,7 +41,11 @@ def main() -> None:
     )
     parser.add_argument("--no-midi", action="store_true", help="Disable Minilab3 MIDI")
     parser.add_argument("--no-launchpad", action="store_true", help="Disable Launchpad")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     log.info("Starting Harmonic Exciter")
     log.info(

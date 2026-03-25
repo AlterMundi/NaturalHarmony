@@ -55,6 +55,7 @@ class BeaconClient:
         # Wire store changes to our sync handler
         self._store._on_change = self._on_state_change
         log.info("BeaconClient started -> %s", self._base_url)
+        self._check_connectivity()
 
     def stop(self) -> None:
         self._running = False
@@ -117,6 +118,18 @@ class BeaconClient:
     def _post_stop(self) -> None:
         self._post("/api/stop", {})
 
+    def _check_connectivity(self) -> None:
+        url = self._base_url + "/api/version"
+        req = urllib.request.Request(url, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                body = resp.read().decode()
+                log.info("Beacon reachable: GET /api/version -> %d %s", resp.status, body)
+        except urllib.error.URLError as e:
+            log.warning("Beacon NOT reachable at %s: %s", self._base_url, e.reason)
+        except Exception as e:
+            log.warning("Beacon connectivity check failed: %s", e)
+
     def _post(self, path: str, payload: dict) -> None:
         url = self._base_url + path
         data = json.dumps(payload).encode()
@@ -128,7 +141,7 @@ class BeaconClient:
         )
         try:
             with urllib.request.urlopen(req, timeout=2) as resp:
-                log.debug("POST %s -> %d", path, resp.status)
+                log.info("POST %s -> %d", path, resp.status)
         except urllib.error.URLError as e:
             log.warning("Beacon unreachable (%s): %s", path, e.reason)
         except Exception as e:

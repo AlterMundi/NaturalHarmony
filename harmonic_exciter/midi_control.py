@@ -50,6 +50,8 @@ class Minilab3Control:
     # ---- Lifecycle -------------------------------------------------------
 
     def start(self) -> None:
+        all_ports = mido.get_input_names()
+        log.info("MIDI input ports: %s", all_ports)
         port_name = self._find_port()
         if not port_name:
             log.warning(

@@ -45,6 +45,8 @@ class LaunchpadControl:
     # ---- Lifecycle -------------------------------------------------------
 
     def start(self) -> None:
+        all_ports = mido.get_input_names()
+        log.info("MIDI input ports: %s", all_ports)
         port_name = self._find_port()
         if not port_name:
             log.warning(
@@ -97,12 +99,15 @@ class LaunchpadControl:
             self._handle(msg)
 
     def _handle(self, msg) -> None:
+        log.debug("Launchpad msg: %s", msg)
         if msg.type == "note_on" and msg.velocity > 0:
             tine = self._pad_to_tine.get(msg.note)
             if tine is not None:
                 active = self._store.tine_toggle(tine)
                 self._set_led(msg.note, active)
-                log.debug("Pad %d -> tine %d %s", msg.note, tine, "ON" if active else "OFF")
+                log.info("Pad %d -> tine %d %s", msg.note, tine, "ON" if active else "OFF")
+            else:
+                log.debug("Pad %d not mapped (mapped notes: %s)", msg.note, list(self._pad_to_tine))
 
     # ---- LED helpers -----------------------------------------------------
 
