@@ -32,8 +32,9 @@ MINILAB_PANIC_PAD = 39
 
 LAUNCHPAD_PORT_PATTERN = "Launchpad"
 
-# Bottom row of Launchpad Mini (programmer mode): pads map to tines 0-4
-LAUNCHPAD_TINE_PADS = [11, 12, 13, 14, 15]
+# Bottom row of Launchpad Mini (live/default mode): pads map to tines 0-4
+# Notes 48-52 = bottom row in default mode (not programmer mode).
+LAUNCHPAD_TINE_PADS = [48, 49, 50, 51, 52]
 LED_COLOR_ACTIVE = 21    # green
 LED_COLOR_INACTIVE = 0   # off
 
