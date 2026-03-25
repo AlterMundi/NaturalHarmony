@@ -42,7 +42,8 @@ class BeaconClient:
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._thread: Optional[threading.Thread] = None
         self._running = False
-        self._last_active_count: int = 0  # track to avoid spurious stops
+        self._last_active_count: int = 0
+        self._last_active_set: frozenset = frozenset()  # track tine set changes
 
     # ---- Lifecycle -------------------------------------------------------
 
@@ -60,6 +61,7 @@ class BeaconClient:
     def stop(self) -> None:
         self._running = False
         self._queue.put(_SENTINEL)
+        self._last_active_set = frozenset()
         self._post_stop()  # silence beacon on shutdown
 
     # ---- State change hook -----------------------------------------------
@@ -87,27 +89,33 @@ class BeaconClient:
     def _sync(self) -> None:
         snapshot = self._store.get_snapshot()   # active tines only
         master = self._store.get_master_duty()
+        current_active_set = frozenset(snapshot.keys())
 
         if not snapshot:
-            # Only stop if we previously sent tines — avoids killing web-UI state
             if self._last_active_count > 0:
                 self._post_stop()
                 self._last_active_count = 0
+                self._last_active_set = frozenset()
             return
 
-        self._post_stop()
+        # Only stop+restart when the set of active tines changes.
+        # For parameter-only changes (duty/phase on same tines), skip the stop
+        # so the firmware can update duty smoothly without restarting PWM.
+        if current_active_set != self._last_active_set:
+            self._post_stop()
 
         tines_payload = []
         for idx, params in sorted(snapshot.items()):
-            vel = max(1, min(255, int(params.duty * master * 255)))
+            vel = min(255, int(params.duty * master * 255))
             tines_payload.append({
                 "index": idx,
                 "vel": vel,
-                "dur": 0,           # infinite sustain
-                "phase": params.phase,  # degrees 0-360, maps to LEDC hpoint
+                "dur": 0,
+                "phase": params.phase,
             })
 
         self._last_active_count = len(tines_payload)
+        self._last_active_set = current_active_set
         self._post("/api/play", {
             "mode": "sustain",
             "tines": tines_payload,
