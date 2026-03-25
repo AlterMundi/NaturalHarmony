@@ -42,6 +42,7 @@ class BeaconClient:
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        self._last_active_count: int = 0  # track to avoid spurious stops
 
     # ---- Lifecycle -------------------------------------------------------
 
@@ -86,10 +87,14 @@ class BeaconClient:
         snapshot = self._store.get_snapshot()   # active tines only
         master = self._store.get_master_duty()
 
-        self._post_stop()
-
         if not snapshot:
+            # Only stop if we previously sent tines — avoids killing web-UI state
+            if self._last_active_count > 0:
+                self._post_stop()
+                self._last_active_count = 0
             return
+
+        self._post_stop()
 
         tines_payload = []
         for idx, params in sorted(snapshot.items()):
@@ -101,6 +106,7 @@ class BeaconClient:
                 "phase": params.phase,  # degrees 0-360, maps to LEDC hpoint
             })
 
+        self._last_active_count = len(tines_payload)
         self._post("/api/play", {
             "mode": "sustain",
             "tines": tines_payload,
