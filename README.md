@@ -269,6 +269,74 @@ Log out and back in for changes to take effect.
 - **moderngl** (≥5.8.0) — 3D visualizer (optional)
 - **numpy** (≥1.24.0) — Visualizer math (optional)
 
+## Literate Program
+
+The Harmonic Beacon core is documented as a **literate program** — a single
+document that is both human-readable narrative and machine-extractable source
+code. The file `harmonic-beacon.lit.md` weaves prose, diagrams, and code in
+"psychological order" (the order that best explains the system, not the order
+the compiler demands).
+
+### What's in it
+
+The literate program covers all 10 modules of `harmonic_beacon/`:
+
+| Section | Module | What it explains |
+|---------|--------|-----------------|
+| The Mathematics | `harmonics.py` | The harmonic series equation, cents, frequency mapping |
+| Configuration | `config.py` | Chromatic prototypes, CC assignments, OSC networking |
+| Key Mapping | `key_mapper.py` | How MIDI keys become harmonic numbers |
+| MIDI Events | `midi_handler.py` | Receiving input from physical controllers |
+| Voice Management | `polyphony.py` | Tracking active notes and voice allocation |
+| Harmonic Chorus | `lfo.py` | Triangle-wave sweep between harmonics |
+| OSC Output | `osc_sender.py` | Sending exact frequencies to Surge XT |
+| MPE Output | `mpe_sender.py` | MIDI Polyphonic Expression for microtonal control |
+| The Orchestrator | `main.py` | The real-time event loop tying everything together |
+
+### Reading the document
+
+Open `harmonic-beacon.lit.md` in any Markdown viewer (VS Code, Obsidian, GitHub)
+or generate a PDF:
+
+```bash
+# Install pandoc + xelatex (one-time)
+sudo apt install pandoc texlive-xetex
+
+# Generate PDF
+pandoc harmonic-beacon.lit.md -o harmonic-beacon.pdf \
+  --pdf-engine=xelatex --toc --number-sections \
+  -V geometry:margin=1.5cm
+```
+
+A pre-built PDF is included at `harmonic-beacon.pdf`.
+
+### Extracting source code from the document
+
+The `.lit.md` is the **single source of truth**. You can regenerate the
+Python source files from it:
+
+```bash
+# Install tsx (one-time)
+npm install -g tsx
+
+# Extract source files
+npx tsx ~/.hermes/skills/creative/literate-programming/scripts/tangle.ts \
+  harmonic-beacon.lit.md --output-dir .
+
+# Verify extraction matches current source
+npx tsx ~/.hermes/skills/creative/literate-programming/scripts/tangle.ts \
+  harmonic-beacon.lit.md --output-dir . --verify
+```
+
+### Philosophy
+
+This literate program is a probe for **Harmonic Information Theory (HIT)**.
+While the code makes the Beacon *work*, the narrative makes it *understood*.
+Every code block is preceded by prose explaining *why* it exists, not just
+*what* it does. The document is meant to be read cover-to-cover by someone
+who wants to understand the system deeply — from the physics of the harmonic
+series to the real-time event loop that makes it audible.
+
 ## License
 
 MIT License — See LICENSE file for details.
